@@ -88,12 +88,22 @@ kbd{background:#222731;border:1px solid #333a45;border-bottom-width:2px;border-r
   </div>
 
   <div class="sec">
+    <label>צביעת רצפה</label>
+    <div class="row">
+      <button id="cZone">לפי שטח</button>
+      <button id="cSpace" class="on">לפי חלל</button>
+      <button id="cPlain">אחיד</button>
+    </div>
+  </div>
+
+  <div class="sec">
     <label>שכבות</label>
     <div class="tog on"><input type="checkbox" id="tWall" checked><span>קירות</span></div>
     <div class="tog on"><input type="checkbox" id="tGlass" checked><span>זיגוג</span></div>
     <div class="tog"><input type="checkbox" id="tFurn"><span>ריהוט לפי התוכנית</span></div>
     <div class="tog"><input type="checkbox" id="tCeil"><span>תקרה</span></div>
-    <div class="tog on"><input type="checkbox" id="tRooms" checked><span>צביעת חללים</span></div>
+    <div class="tog on"><input type="checkbox" id="tZones" checked><span>שכבות שטח</span></div>
+    <div class="tog on"><input type="checkbox" id="tRooms" checked><span>חללים</span></div>
   </div>
 
   <div class="sec">
@@ -124,6 +134,10 @@ kbd{background:#222731;border:1px solid #333a45;border-bottom-width:2px;border-r
 <script id="model" type="application/json">__MODEL__</script>
 <script>
 const MODEL = JSON.parse(document.getElementById('model').textContent);
+
+/* three r128 predates colour management, so every authored colour and texture
+   has to be handed over in linear space or the whole model renders washed out. */
+const col = h => new THREE.Color(h).convertSRGBToLinear();
 const WH = MODEL.wall_height, SILL = MODEL.sill, HEAD = MODEL.head, SLAB = MODEL.slab;
 
 /* ---------------------------------------------------------------- scene --- */
@@ -169,6 +183,7 @@ scene.add(fill);
   g.addColorStop(1.00, '#6d6459');
   const x = c.getContext('2d'); x.fillStyle = g; x.fillRect(0, 0, 32, 128);
   const t = new THREE.CanvasTexture(c);
+  t.encoding = THREE.sRGBEncoding;
   t.mapping = THREE.EquirectangularReflectionMapping;
   const pm = new THREE.PMREMGenerator(renderer);
   pm.compileEquirectangularShader();
@@ -229,6 +244,7 @@ function grain(base, contrast, scale){
   }
   x.putImageData(img,0,0);
   const t = new THREE.CanvasTexture(c);
+  t.encoding = THREE.sRGBEncoding;
   t.wrapS = t.wrapT = THREE.RepeatWrapping;
   t.repeat.set(scale, scale);
   t.anisotropy = renderer.capabilities.getMaxAnisotropy();
@@ -238,22 +254,55 @@ function grain(base, contrast, scale){
 }
 
 const MAT = {
-  wall:  new THREE.MeshStandardMaterial({color:0xeae3d8, roughness:0.9, metalness:0.0,
+  wall:  new THREE.MeshStandardMaterial({color:col(0xeae3d8), roughness:0.9, metalness:0.0,
                                          envMapIntensity:0.35, map:grain('#eae3d8', 6, 0.9)}),
-  slab:  new THREE.MeshStandardMaterial({color:0x7d786f, roughness:0.95, envMapIntensity:0.2}),
-  floor: new THREE.MeshStandardMaterial({color:0xb9a88f, roughness:0.42, metalness:0.03,
+  slab:  new THREE.MeshStandardMaterial({color:col(0x7d786f), roughness:0.95, envMapIntensity:0.2}),
+  floor: new THREE.MeshStandardMaterial({color:col(0xb9a88f), roughness:0.42, metalness:0.03,
                                          envMapIntensity:0.7, map:grain('#b9a88f', 10, 1.6)}),
-  glass: new THREE.MeshPhysicalMaterial({color:0xaecfe2, roughness:0.04, metalness:0.0,
-                                         transparent:true, opacity:0.22, envMapIntensity:1.4,
-                                         side:THREE.DoubleSide}),
-  furn:  new THREE.MeshStandardMaterial({color:0x9a8a74, roughness:0.8}),
-  ceil:  new THREE.MeshStandardMaterial({color:0xd7cfc2, roughness:1.0, envMapIntensity:0.1,
+  glass: new THREE.MeshPhysicalMaterial({color:col(0xbfe0ef), roughness:0.02, metalness:0.0,
+                                         transparent:true, opacity:0.10, envMapIntensity:2.2,
+                                         depthWrite:false, side:THREE.DoubleSide}),
+  frame: new THREE.MeshStandardMaterial({color:col(0x8f8c86), roughness:0.45, metalness:0.35}),
+  furn:  new THREE.MeshStandardMaterial({color:col(0x9a8a74), roughness:0.8}),
+  ceil:  new THREE.MeshStandardMaterial({color:col(0xd7cfc2), roughness:1.0, envMapIntensity:0.1,
                                         side:THREE.DoubleSide})
 };
-const ROOM_COLORS = [0xb8935f,0x7190ab,0x86a677,0xbb9a5c,0x8a7ea8,0x639dab,0xb2798a,
-                     0x99a862,0xae7a70,0x7387b5,0xa89658,0x77a894];
+// A tinted floor slab needs a neutral grain, otherwise the timber base colour
+// of the plate texture drags every room colour towards mud.
+MAT.tint = grain('#ffffff', 9, 1.6);
+const ROOM_COLORS = [0xc98a52,0x4f8fc4,0x5fa96a,0xd2ab45,0x8a72c0,0x35a6ab,0xc76a90,
+                     0x9bb247,0xc06a4f,0x5f7ccb,0xb59440,0x3fa88c];
 
 let group = new THREE.Group(); scene.add(group);
+let zoneMeshes = [], outdoor = {}, colorMode = 'space';
+const OUTDOOR_COLOR = 0x6f9e86;
+
+function outKey(fl){ return 'outdoor:' + (MODEL.source || '') + ':' + fl.index; }
+function loadOutdoor(fl){
+  const o = {};
+  fl.spaces.forEach((sp, i) => { if (sp.outdoor) o[i] = true; });
+  try {
+    const raw = localStorage.getItem(outKey(fl));
+    if (raw) Object.assign(o, JSON.parse(raw));
+  } catch (e) {}
+  return o;
+}
+function saveOutdoor(){
+  try { localStorage.setItem(outKey(current), JSON.stringify(outdoor)); } catch (e) {}
+}
+function isOutdoor(sp, i){ return !!outdoor[i]; }
+function spaceColor(sp, i){
+  if (isOutdoor(sp, i)) return col(OUTDOOR_COLOR);
+  if (colorMode === 'zone' && sp.zone) return col(sp.zone);
+  if (colorMode === 'plain') return col(0xc4b7a3);
+  return col(ROOM_COLORS[i % ROOM_COLORS.length]);
+}
+function recolorSpaces(){
+  spaceMeshes.forEach((m, i) => {
+    m.material.color = spaceColor(m.userData.space, m.userData.index);
+    m.material.needsUpdate = true;
+  });
+}
 let clip = new THREE.Plane(new THREE.Vector3(0,-1,0), WH);
 let current = null, spaceMeshes = [], picked = -1;
 
@@ -267,18 +316,30 @@ function addMesh(geom, mat, cast, receive, layerName){
 
 function buildFloor(fl){
   while (group.children.length) group.remove(group.children[0]);
-  spaceMeshes = []; picked = -1;
+  spaceMeshes = []; zoneMeshes = []; picked = -1;
   const W = fl.size[0], D = fl.size[1];
+  outdoor = loadOutdoor(fl);
 
   addMesh(solidGeom(fl.plate, -SLAB, 0.0), MAT.slab, true, true, 'slab');
   addMesh(solidGeom(fl.plate, 0.0, 0.02, {bottom:false}), MAT.floor, false, true, 'floor');
 
+  // One floor layer per hatch colour, in the colour the drawing itself uses -
+  // so a category that the sheet separates stays separated here.
+  Object.entries(fl.zones || {}).forEach(([hex, z]) => {
+    const mat = new THREE.MeshStandardMaterial({
+      color: col(hex), roughness:0.5, metalness:0.02,
+      envMapIntensity:0.55, map: MAT.tint });
+    const m = addMesh(rectGeom(z.rects, 0.018, 0.05), mat, false, true, 'zones');
+    m.userData.zone = hex; m.userData.zoneArea = z.area;
+    zoneMeshes.push(m);
+  });
+
   fl.spaces.forEach((sp, i) => {
     const mat = new THREE.MeshStandardMaterial({
-      color: ROOM_COLORS[i % ROOM_COLORS.length], roughness:0.45, metalness:0.03,
-      envMapIntensity:0.6, map: MAT.floor.map });
-    const m = addMesh(rectGeom(sp.rects, 0.018, 0.055), mat, false, true, 'rooms');
-    m.userData.space = sp; m.userData.baseColor = mat.color.clone();
+      color: spaceColor(sp, i), roughness:0.5, metalness:0.02,
+      envMapIntensity:0.45, map: MAT.tint });
+    const m = addMesh(rectGeom(sp.rects, 0.052, 0.086), mat, false, true, 'rooms');
+    m.userData.space = sp; m.userData.index = i;
     spaceMeshes.push(m);
   });
 
@@ -288,13 +349,15 @@ function buildFloor(fl){
   addMesh(solidGeom(fl.wall_under, 0.0, SILL), wallMats[1], true, true, 'wall');
   addMesh(solidGeom(fl.wall_over, HEAD, WH), wallMats[2], true, true, 'wall');
 
+  const fm = MAT.frame.clone(); fm.clippingPlanes = [clip];
+  addMesh(solidGeom(fl.glass, SILL, SILL + 0.05), fm, false, false, 'glass');
+  addMesh(solidGeom(fl.glass, HEAD - 0.05, HEAD), fm, false, false, 'glass');
   const gm = MAT.glass.clone(); gm.clippingPlanes = [clip];
-  addMesh(solidGeom(fl.glass, SILL, HEAD), gm, false, false, 'glass');
+  addMesh(solidGeom(fl.glass, SILL + 0.05, HEAD - 0.05), gm, false, false, 'glass');
 
-  addMesh(solidGeom(fl.furniture, 0.056, 0.17), MAT.furn, true, true, 'furn');
+  addMesh(solidGeom(fl.furniture, 0.086, 0.19), MAT.furn, true, true, 'furn');
 
-  const cm = MAT.ceil.clone(); cm.clippingPlanes = [clip];
-  addMesh(solidGeom(fl.plate, WH, WH + 0.12), cm, false, false, 'ceil');
+  buildCeiling(fl);
 
   group.position.set(-W/2, 0, -D/2);
   key.position.set(W*0.30, Math.max(W, D)*0.42 + 26, -D*0.85);
@@ -308,6 +371,18 @@ function buildFloor(fl){
   applyLayers();
   frameAll();
   fillTables(fl);
+}
+
+/* A balcony is open to the sky, so the ceiling is assembled from the indoor
+   spaces and the walls instead of from the whole floor plate. */
+function buildCeiling(fl){
+  const old = group.children.filter(m => m.userData.layer === 'ceil');
+  old.forEach(m => group.remove(m));
+  const rects = fl.wall_rects.slice();
+  fl.spaces.forEach((sp, i) => { if (!isOutdoor(sp, i)) rects.push.apply(rects, sp.rects); });
+  const cm = MAT.ceil.clone(); cm.clippingPlanes = [clip];
+  const m = addMesh(rectGeom(rects, WH, WH + 0.12), cm, false, false, 'ceil');
+  m.visible = $('#tCeil').checked;
 }
 
 function frameAll(){
@@ -404,7 +479,7 @@ function pick(e){
 function select(i){
   picked = i;
   spaceMeshes.forEach((m, k) => {
-    m.material.emissive = new THREE.Color(k === i ? 0x4a3a1e : 0x000000);
+    m.material.emissive = col(k === i ? 0x53401f : 0x000000);
     m.material.needsUpdate = true;
   });
   document.querySelectorAll('#spaces tr').forEach((tr, k) =>
@@ -427,22 +502,32 @@ function fmt(n){ return n.toLocaleString('he-IL', {minimumFractionDigits:1, maxi
 function fillTables(fl){
   const z = $('#zones'); z.innerHTML = '';
   let tot = 0;
-  Object.entries(fl.exact_area_m2).sort((a,b)=>b[1]-a[1]).forEach(([c,a]) => {
-    tot += a;
+  Object.entries(fl.zones || {}).sort((a,b)=>b[1].area-a[1].area).forEach(([c, v]) => {
+    tot += v.area;
     z.insertAdjacentHTML('beforeend',
-      `<tr><td>גוון <span class="swatch" style="background:${c}"></span></td>
-           <td class="n">${fmt(a)} מ״ר</td></tr>`);
+      `<tr class="pick" data-z="${c}"><td><span class="swatch" style="background:${c}"></span>
+           ${c}</td><td class="n">${fmt(v.area)} מ״ר</td></tr>`);
   });
   z.insertAdjacentHTML('beforeend',
-    `<tr><td><b>סה״כ</b></td><td class="n"><b>${fmt(tot)} מ״ר</b></td></tr>`);
+    `<tr><td>סכום הקודים</td><td class="n">${fmt(tot)} מ״ר</td></tr>` +
+    `<tr><td><b>שטח הרצפה</b></td><td class="n"><b>${fmt(fl.plate_area_m2)} מ״ר</b></td></tr>`);
+  z.querySelectorAll('tr[data-z]').forEach(tr => tr.onclick = () => {
+    const hex = tr.dataset.z;
+    const m = zoneMeshes.find(m => m.userData.zone === hex);
+    if (!m) return;
+    m.visible = !m.visible;
+    tr.style.opacity = m.visible ? '' : '.4';
+  });
   $('#zonenote').textContent =
-    'שטחים מחושבים מגיאומטריית ההצללה שבתוכנית עצמה, לא מהרסטר.';
+    'שטח לכל גוון הצללה, מגיאומטריית ההצללה שבתוכנית עצמה. קודי שטח חופפים זה על זה, ' +
+    'ולכן סכום הקודים גדול משטח הרצפה בפועל. לחיצה על שורה מכבה את השכבה.';
 
   const s = $('#spaces'); s.innerHTML = '';
   fl.spaces.slice().sort((a,b)=>b.area-a.area).forEach((sp) => {
     const i = fl.spaces.indexOf(sp);
     s.insertAdjacentHTML('beforeend',
-      `<tr class="pick" data-i="${i}"><td>חלל ${sp.id}</td>
+      `<tr class="pick" data-i="${i}"><td>${isOutdoor(sp,i) ? 'מרפסת' : 'חלל'} ${sp.id}
+           <span class="swatch" style="background:${sp.zone||'#666'}"></span></td>
            <td class="n">${fmt(sp.area)} מ״ר</td></tr>`);
   });
   s.querySelectorAll('tr').forEach(tr => tr.onclick = () => {
@@ -462,17 +547,30 @@ function fillTables(fl){
 function hud(){
   $('#hudTitle').textContent = current ? (current.title || '') : '';
   const sp = picked >= 0 ? spaceMeshes[picked].userData.space : null;
-  $('#hudBody').innerHTML = sp
-    ? `חלל ${sp.id} · <b>${fmt(sp.area)} מ״ר</b><br>` +
-      `${fmt(sp.bbox[2]-sp.bbox[0])} × ${fmt(sp.bbox[3]-sp.bbox[1])} מ׳`
-    : (mode === 'walk'
+  if (sp){
+    const i = spaceMeshes[picked].userData.index;
+    $('#hudBody').innerHTML =
+      `${isOutdoor(sp,i) ? 'מרפסת' : 'חלל'} ${sp.id} · <b>${fmt(sp.area)} מ״ר</b><br>` +
+      `${fmt(sp.bbox[2]-sp.bbox[0])} × ${fmt(sp.bbox[3]-sp.bbox[1])} מ׳` +
+      (sp.zone ? ` · גוון <span class="swatch" style="background:${sp.zone}"></span>` : '') +
+      `<div style="margin-top:7px"><button id="bOut">${isOutdoor(sp,i)
+        ? 'החזר לחלל סגור' : 'סמן כמרפסת'}</button></div>`;
+    $('#bOut').onclick = () => {
+      outdoor[i] = !outdoor[i];
+      if (!outdoor[i]) delete outdoor[i];
+      saveOutdoor(); recolorSpaces(); buildCeiling(current); applyLayers();
+      fillTables(current); hud();
+    };
+  } else {
+    $('#hudBody').innerHTML = (mode === 'walk'
         ? 'תנועה <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> · ריצה <kbd>Shift</kbd> · מבט בעכבר'
         : 'לחיצה על חלל מציגה את שטחו · גרירה לסיבוב · גלגלת לזום');
+  }
 }
 
 function applyLayers(){
   const on = {wall:$('#tWall').checked, glass:$('#tGlass').checked, furn:$('#tFurn').checked,
-              ceil:$('#tCeil').checked, rooms:$('#tRooms').checked};
+              ceil:$('#tCeil').checked, rooms:$('#tRooms').checked, zones:$('#tZones').checked};
   group.children.forEach(m => {
     const l = m.userData.layer;
     if (l in on) m.visible = on[l];
@@ -480,7 +578,18 @@ function applyLayers(){
   document.querySelectorAll('.tog').forEach(t =>
     t.classList.toggle('on', t.querySelector('input').checked));
 }
-['tWall','tGlass','tFurn','tCeil','tRooms'].forEach(id => $('#'+id).onchange = applyLayers);
+['tWall','tGlass','tFurn','tCeil','tRooms','tZones'].forEach(id => $('#'+id).onchange = applyLayers);
+
+function setColorMode(m){
+  colorMode = m;
+  [['cZone','zone'],['cSpace','space'],['cPlain','plain']].forEach(([b, k]) =>
+    $('#'+b).classList.toggle('on', k === m));
+  recolorSpaces();
+  select(picked);
+}
+$('#cZone').onclick  = () => setColorMode('zone');
+$('#cSpace').onclick = () => setColorMode('space');
+$('#cPlain').onclick = () => setColorMode('plain');
 
 $('#slider').oninput = e => { clip.constant = +e.target.value; };
 
@@ -493,6 +602,15 @@ function setMode(m){
     orbit.dist = Math.max(current.size[0], current.size[1]) * 1.15;
     orbit.target.set(0,0,0);
     $('#slider').value = 1.2; clip.constant = 1.2;
+    key.position.set(current.size[0]*0.05, Math.max(current.size[0], current.size[1]),
+                     -current.size[1]*0.05);
+    key.castShadow = false; key.intensity = 1.15; hemi.intensity = 0.9;
+    renderer.toneMappingExposure = 1.05;
+  } else if (current){
+    key.castShadow = true;
+    key.position.set(current.size[0]*0.30,
+                     Math.max(current.size[0], current.size[1])*0.42 + 26,
+                     -current.size[1]*0.85);
   }
   if (m === 'walk'){
     $('#tCeil').checked = true; $('#slider').value = 3.2; clip.constant = 3.2; applyLayers();
@@ -506,8 +624,9 @@ function setMode(m){
     lamp.intensity = 1.5; key.intensity = 0.5; hemi.intensity = 0.3;
     renderer.toneMappingExposure = 0.86;
   } else {
-    lamp.intensity = 0.0; key.intensity = 1.55; hemi.intensity = 0.55;
-    renderer.toneMappingExposure = 0.92;
+    lamp.intensity = 0.0;
+    if (m !== 'plan'){ key.intensity = 1.55; hemi.intensity = 0.55;
+                       renderer.toneMappingExposure = 0.92; }
     if (document.pointerLockElement) document.exitPointerLock();
   }
   hud();

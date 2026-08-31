@@ -451,8 +451,21 @@ def build_floor(sh, box, title, zone_colors, line_colors, furn_colors, args):
     g = sh.grid(box)
     mpx = sh.m_per_px
 
-    zones = {c: sh.fills(g, {c}) for c in zone_colors}
-    furn = sh.fills(g, furn_colors)
+    # A hatch colour counts as an area zone on *this* plan only if it forms a
+    # real region here.  The same colour can be a zone on one floor and a stick
+    # of furniture on another, so the test is per frame, not per sheet.
+    zones, dropped = {}, {}
+    for c in sorted(zone_colors):
+        m = sh.fills(g, {c})
+        if not m.any():
+            continue
+        lab_c, nc = ndi.label(m, structure=np.ones((3, 3)))
+        biggest = ndi.sum(m, lab_c, range(1, nc + 1)).max() * mpx ** 2
+        if biggest < args.min_zone:
+            dropped[c] = round(float(biggest), 2)
+            continue
+        zones[c] = m
+    furn = sh.fills(g, furn_colors | set(dropped))
     Z = np.zeros((g['h'], g['w']), bool)
     for m in zones.values():
         Z |= m
@@ -549,21 +562,36 @@ def build_floor(sh, box, title, zone_colors, line_colors, furn_colors, args):
         sp = np.where(orphan, ol + ns, sp)
         ns += on
     ssz = ndi.sum(free, sp, range(1, ns + 1)) * mpx ** 2
+    # Which hatch each space sits on.  Where the sheet gives balconies their own
+    # area code - and on this kind of permit sheet it usually does - that is what
+    # separates them from the rooms, so the zone is recorded per space rather
+    # than guessed from shape.
+    outdoor_colors = {c.strip().upper() for c in args.outdoor_colors.split(',') if c.strip()}
+    outer = plate & ~ndi.binary_erosion(plate, structure=np.ones((3, 3)))
+    outer = ndi.binary_dilation(outer, structure=disk(P(args.ext_wall + 120)))
     spaces = []
     for i in range(ns):
         if ssz[i] < args.min_space:
             continue
         m = sp == i + 1
+        edge = m & ~ndi.binary_erosion(m, structure=np.ones((3, 3)))
+        openf = float((edge & outer).sum()) / max(1, int(edge.sum()))
+        share = {c: round(float((m & zm).sum()) / max(1, int(m.sum())), 3)
+                 for c, zm in zones.items()}
+        top = max(share, key=share.get) if share else None
         ys, xs = np.nonzero(m)
         spaces.append(dict(id=i + 1, area=round(float(ssz[i]), 2),
                            bbox=[float(xs.min() * mpx), float(ys.min() * mpx),
                                  float(xs.max() * mpx), float(ys.max() * mpx)],
+                           open_frac=round(openf, 3),
+                           zone=top,
+                           outdoor=bool(top in outdoor_colors) if top else False,
                            rects=rects_of(m, mpx)))
 
     # ---- exact areas straight from the hatch geometry --------------------
     s2 = (sh.unit_mm / 1000.0) ** 2
     exact = {}
-    for c in zone_colors:
+    for c in zones:
         a = 0.0
         for col, polys in sh.geom:
             if col != c:
@@ -593,7 +621,9 @@ def build_floor(sh, box, title, zone_colors, line_colors, furn_colors, args):
         glass=solid_of(glass, mpx),
         wall_rects=rects_of(wall, mpx),              # plan footprint, for collision
         lintel_area_m2=round(float(lint.sum()) * mpx ** 2, 2),
-        zones={c: rects_of(m, mpx) for c, m in zones.items() if m.any()},
+        zones={c: dict(area=exact.get(c, 0.0), rects=rects_of(m, mpx))
+               for c, m in zones.items()},
+        dropped_colors=dropped,
         furniture=solid_of(furn & plate, mpx),
         spaces=spaces,
     )
@@ -695,6 +725,12 @@ def main():
     ap.add_argument('--bridge', type=float, default=650.0,
                     help='mm; wall gaps narrower than this are junctions, not doors')
     ap.add_argument('--min-space', type=float, default=2.0, help='m2')
+    ap.add_argument('--min-zone', type=float, default=8.0,
+                    help='m2; a hatch colour whose largest region on a plan is '
+                         'smaller than this is furniture, not an area zone')
+    ap.add_argument('--outdoor-colors', default='',
+                    help='hatch colours that mark balconies / terraces, so those '
+                         'spaces render open to the sky')
     ap.add_argument('--min-window', type=float, default=700.0, help='mm')
     ap.add_argument('--lintel', type=float, default=600.0,
                     help='mm; wall gaps this wide or less get a lintel over them')
@@ -718,13 +754,17 @@ def main():
     # zone when it is a fine hatch covering tens of square metres.  Both can be
     # pinned down by hand when a sheet does something unusual.
     line_colors = {c for c in ll if ll[c] > 150 and ll[c] > 5 * fa.get(c, 0)}
-    zone_colors = {c for c in fa
-                   if c not in line_colors and fa[c] > 25 and fn[c] > 200
-                   and fa[c] / fn[c] < 0.8}
-    if a.zone_colors:
-        zone_colors = {c.strip().upper() for c in a.zone_colors.split(',')}
     if a.line_colors:
         line_colors = {c.strip().upper() for c in a.line_colors.split(',')}
+    # Area hatches sit in a narrow band of mean triangle size: coarser than that
+    # is a site or background block, finer is a fitting drawn as a solid.  A
+    # colour that also draws hundreds of metres of line is line work whose thick
+    # pen happens to be filled, not a hatch.
+    zone_colors = {c for c in fa
+                   if c not in line_colors and ll.get(c, 0) < 300 and fa[c] >= 20
+                   and 0.2 <= fa[c] / max(1, fn[c]) <= 3.5}
+    if a.zone_colors:
+        zone_colors = {c.strip().upper() for c in a.zone_colors.split(',')}
     def lum(c):
         try:
             return .299 * int(c[1:3], 16) + .587 * int(c[3:5], 16) + .114 * int(c[5:7], 16)

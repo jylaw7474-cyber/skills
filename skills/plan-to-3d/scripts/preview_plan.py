@@ -15,11 +15,13 @@ def draw(fl, px_per_m, out):
     H = int(fl['size'][1] * px_per_m) + 1
     img = Image.new('RGB', (W, H), 'white'); d = ImageDraw.Draw(img)
     def rects(rs, col):
+        if isinstance(rs, dict):      # a solid: caps plus exposed faces
+            rs = rs['r']
         for x, y, w, h in rs:
             d.rectangle([x*px_per_m, y*px_per_m, (x+w)*px_per_m, (y+h)*px_per_m], fill=col)
     rects(fl['plate'], C['plate'])
     for i, sp in enumerate(sorted(fl['spaces'], key=lambda s: -s['area'])):
-        rects(sp['rects'], PALETTE[i % len(PALETTE)])
+        rects(sp['rects'], (168, 208, 186) if sp.get('outdoor') else PALETTE[i % len(PALETTE)])
     rects(fl['furniture'], C['furniture'])
     rects(fl['wall'], C['wall'])
     rects(fl['wall_under'], C['wall'])
