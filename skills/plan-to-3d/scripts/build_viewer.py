@@ -90,9 +90,9 @@ kbd{background:#222731;border:1px solid #333a45;border-bottom-width:2px;border-r
   <div class="sec">
     <label>צביעת רצפה</label>
     <div class="row">
-      <button id="cZone" class="on">לפי שטח</button>
+      <button id="cReal" class="on">ריאליסטי</button>
+      <button id="cZone">לפי שטח</button>
       <button id="cSpace">לפי חלל</button>
-      <button id="cPlain">אחיד</button>
     </div>
   </div>
 
@@ -168,8 +168,28 @@ renderer.localClippingEnabled = true;
 document.body.appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x0d0f12);
-scene.fog = new THREE.Fog(0x0d0f12, 60, 190);
+(function(){
+  const c = document.createElement('canvas'); c.width = 16; c.height = 256;
+  const g = c.getContext('2d').createLinearGradient(0, 0, 0, 256);
+  g.addColorStop(0.00, '#6e93bb');
+  g.addColorStop(0.55, '#c3d3e2');
+  g.addColorStop(0.72, '#e8e4da');
+  g.addColorStop(1.00, '#3b3d3f');
+  const x = c.getContext('2d'); x.fillStyle = g; x.fillRect(0, 0, 16, 256);
+  const t = new THREE.CanvasTexture(c);
+  t.encoding = THREE.sRGBEncoding;
+  t.mapping = THREE.EquirectangularReflectionMapping;
+  scene.background = t;
+})();
+scene.fog = new THREE.Fog(0xdfe2e2, 90, 320);
+
+const ground = new THREE.Mesh(
+  new THREE.CircleGeometry(320, 64),
+  new THREE.MeshStandardMaterial({color:new THREE.Color(0x9a9d97).convertSRGBToLinear(),
+                                  roughness:0.96, metalness:0}));
+ground.rotation.x = -Math.PI/2;
+ground.receiveShadow = true;
+scene.add(ground);
 
 const camera = new THREE.PerspectiveCamera(45, 1, 0.05, 600);
 const walkCam = new THREE.PerspectiveCamera(68, 1, 0.02, 300);
@@ -213,8 +233,13 @@ function solidGeom(sol, z0, z1, opts){
   const pos = [], nor = [], uv = [];
   const push = (x,y,z,nx,ny,nz,u,v) => { pos.push(x,y,z); nor.push(nx,ny,nz); uv.push(u,v); };
   const quad = (a,b,c,d,n) => {
-    for (const p of [a,b,c, a,c,d]) push(p[0],p[1],p[2], n[0],n[1],n[2],
-                                        (p[0]+p[2])*0.5, p[1]*0.5 + (p[0]-p[2])*0.25);
+    for (const p of [a,b,c, a,c,d]){
+      let u, v;
+      if (n[1] !== 0){ u = p[0]; v = p[2]; }          // caps: plan-aligned
+      else if (n[0] !== 0){ u = p[2]; v = p[1]; }     // x-faces: length x height
+      else { u = p[0]; v = p[1]; }                    // z-faces
+      push(p[0],p[1],p[2], n[0],n[1],n[2], u*0.5, v*0.5);
+    }
   };
   // horizontal caps
   for (const r of sol.r){
@@ -279,28 +304,85 @@ const MAT = {
                                          transparent:true, opacity:0.26, envMapIntensity:1.8,
                                          depthWrite:false, side:THREE.DoubleSide}),
   frame: new THREE.MeshStandardMaterial({color:col(0x4c5258), roughness:0.4, metalness:0.45}),
-  wallTop: new THREE.MeshStandardMaterial({color:col(0x3c4046), roughness:0.85}),
-  furn: {
-    0.45: new THREE.MeshStandardMaterial({color:col(0x9b9285), roughness:0.85}),
-    0.55: new THREE.MeshStandardMaterial({color:col(0xd8cdbb), roughness:0.9}),
-    0.72: new THREE.MeshStandardMaterial({color:col(0xa8875f), roughness:0.55,
-                                          envMapIntensity:0.5}),
-    0.9:  new THREE.MeshStandardMaterial({color:col(0x8a7357), roughness:0.5,
-                                          envMapIntensity:0.6})
-  },
+  wallTop: new THREE.MeshStandardMaterial({color:col(0x8b8781), roughness:0.85}),
+  furn: null,
   ceil:  new THREE.MeshStandardMaterial({color:col(0xd7cfc2), roughness:1.0, envMapIntensity:0.1,
                                         side:THREE.DoubleSide})
 };
 // A tinted floor slab needs a neutral grain, otherwise the timber base colour
 // of the plate texture drags every room colour towards mud.
 MAT.tint = grain('#ffffff', 9, 1.6);
+
+/* Oak boards drawn in near-white greyscale, so the active colour mode decides
+   whether they read as natural timber or as an analysis tint over timber. */
+MAT.wood = (function(){
+  const c = document.createElement('canvas'); c.width = 512; c.height = 512;
+  const x = c.getContext('2d');
+  x.fillStyle = '#e6ddcf'; x.fillRect(0, 0, 512, 512);
+  const PH = 42;                        // board height in px
+  for (let row = 0; row < 512/PH; row++){
+    const off = (row % 3) * 170;        // staggered joints
+    for (let px = -512; px < 512; px += 256){
+      const tone = 222 + Math.floor(Math.random()*26) - 13;
+      x.fillStyle = `rgb(${tone},${tone-8},${tone-24})`;
+      x.fillRect(px + off, row*PH, 254, PH - 2);
+      // grain streaks
+      x.strokeStyle = 'rgba(120,95,60,0.13)';
+      for (let g = 0; g < 5; g++){
+        const gy = row*PH + 4 + Math.random()*(PH - 10);
+        x.beginPath();
+        x.moveTo(px + off, gy);
+        x.bezierCurveTo(px+off+80, gy + Math.random()*4-2,
+                        px+off+170, gy + Math.random()*4-2, px+off+254, gy);
+        x.stroke();
+      }
+    }
+    x.fillStyle = 'rgba(60,45,28,0.35)';
+    x.fillRect(0, row*PH + PH - 2, 512, 2);
+  }
+  const t = new THREE.CanvasTexture(c);
+  t.encoding = THREE.sRGBEncoding;
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.repeat.set(0.22, 0.22);             // one board ~ 0.19 m x 1.1 m in world
+  t.anisotropy = renderer.capabilities.getMaxAnisotropy();
+  return t;
+})();
+
+MAT._linenDecl = (function(){
+  const c = document.createElement('canvas'); c.width = 128; c.height = 128;
+  const x = c.getContext('2d');
+  x.fillStyle = '#efe9df'; x.fillRect(0, 0, 128, 128);
+  x.strokeStyle = 'rgba(140,130,112,0.16)';
+  for (let i = 0; i < 128; i += 3){
+    x.beginPath(); x.moveTo(0, i); x.lineTo(128, i); x.stroke();
+    x.beginPath(); x.moveTo(i, 0); x.lineTo(i, 128); x.stroke();
+  }
+  const t = new THREE.CanvasTexture(c);
+  t.encoding = THREE.sRGBEncoding;
+  t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(1.4, 1.4);
+  return t;
+})();
+MAT.linen = MAT._linenDecl;
+MAT.furn = {
+  0.45: new THREE.MeshStandardMaterial({color:col(0xa39a8d), roughness:0.85, map:MAT.linen}),
+  0.55: new THREE.MeshStandardMaterial({color:col(0xe2d9c8), roughness:0.9, map:MAT.linen}),
+  0.72: new THREE.MeshStandardMaterial({color:col(0xb08a5e), roughness:0.5,
+                                        envMapIntensity:0.55, map:MAT.wood}),
+  0.9:  new THREE.MeshStandardMaterial({color:col(0x93744f), roughness:0.45,
+                                        envMapIntensity:0.6, map:MAT.wood})
+};
 // balcony decking: board stripes, tinted by the balcony colour underneath
 MAT.deck = (function(){
   const c = document.createElement('canvas'); c.width = 64; c.height = 64;
   const x = c.getContext('2d');
-  x.fillStyle = '#ffffff'; x.fillRect(0, 0, 64, 64);
-  x.fillStyle = '#c9c9c9';
-  for (let i = 0; i < 64; i += 8) x.fillRect(i, 0, 2, 64);
+  x.fillStyle = '#efe4d2'; x.fillRect(0, 0, 64, 64);
+  for (let i = 0; i < 64; i += 8){
+    const tone = 214 + Math.floor(Math.random()*24) - 12;
+    x.fillStyle = `rgb(${tone},${tone-14},${tone-34})`;
+    x.fillRect(i + 1, 0, 6, 64);
+    x.fillStyle = 'rgba(70,52,30,0.4)';
+    x.fillRect(i, 0, 1, 64);
+  }
   const t = new THREE.CanvasTexture(c);
   t.encoding = THREE.sRGBEncoding;
   t.wrapS = t.wrapT = THREE.RepeatWrapping;
@@ -312,7 +394,7 @@ const ROOM_COLORS = [0xd9a06b,0x76a8d8,0x7fc08b,0xe2bd62,0xa591d4,0x5fbfc4,0xd88
                      0xb3c765,0xd8886d,0x86a0dd,0xc9ab5e,0x64c0a4];
 
 let group = new THREE.Group(); scene.add(group);
-let zoneMeshes = [], outdoor = {}, colorMode = 'zone';
+let zoneMeshes = [], outdoor = {}, colorMode = 'real';
 const OUTDOOR_COLOR = 0x6f9e86;
 
 function outKey(fl){ return 'outdoor:' + (MODEL.source || '') + ':' + fl.index; }
@@ -339,6 +421,8 @@ function mainZone(){
   return best;
 }
 function spaceColor(sp, i){
+  if (colorMode === 'real')
+    return col(isOutdoor(sp, i) ? 0xcdb28f : 0xcbb492);   // timber, unpainted
   if (isOutdoor(sp, i)) return sp.zone ? vivid(sp.zone) : col(OUTDOOR_COLOR);
   if (colorMode === 'zone' && sp.zone){
     // rooms inside the general category keep their own palette, so both kinds
@@ -374,6 +458,7 @@ function buildFloor(fl){
   const W = fl.size[0], D = fl.size[1];
   outdoor = loadOutdoor(fl);
 
+  ground.position.y = -SLAB - 0.02;
   addMesh(solidGeom(fl.plate, -SLAB, 0.0), MAT.slab, true, true, 'slab');
   addMesh(solidGeom(fl.plate, 0.0, 0.02, {bottom:false}), MAT.floor, false, true, 'floor');
 
@@ -389,19 +474,21 @@ function buildFloor(fl){
       envMapIntensity:0.22, map: MAT.tint });
     const m = addMesh(rectGeom(z.rects, 0.018, 0.05), mat, false, true, 'zones');
     m.userData.zone = hex; m.userData.zoneArea = z.area;
-    m.visible = named;
+    m.visible = named && colorMode !== 'real';
     zoneMeshes.push(m);
   });
 
   fl.spaces.forEach((sp, i) => {
     const mat = new THREE.MeshStandardMaterial({
-      color: spaceColor(sp, i), roughness:0.85, metalness:0.0,
-      envMapIntensity:0.22, map: isOutdoor(sp, i) ? MAT.deck : MAT.tint });
+      color: spaceColor(sp, i), roughness:0.72, metalness:0.0,
+      envMapIntensity:0.28,
+      map: isOutdoor(sp, i) ? MAT.deck : MAT.wood });
     const m = addMesh(rectGeom(sp.rects, 0.052, 0.086), mat, false, true, 'rooms');
     m.userData.space = sp; m.userData.index = i;
     spaceMeshes.push(m);
   });
   buildLabels(fl);
+  buildAO(fl);
 
   const wallMats = [MAT.wall.clone(), MAT.wall.clone(), MAT.wall.clone()];
   wallMats.forEach(m => { m.clippingPlanes = [clip]; m.clipShadows = true; });
@@ -493,6 +580,45 @@ function buildLabels(fl){
     group.add(spr);
     labelSprites.push(spr);
   });
+}
+
+/* Soft contact shading: walls and furniture ground themselves with a blurred
+   shadow drawn straight from their footprints - the cheap half of ambient
+   occlusion, and the half the eye actually misses. */
+function buildAO(fl){
+  const S = 8;                                      // px per metre
+  const W = Math.min(2048, Math.ceil(fl.size[0]*S));
+  const H = Math.min(1024, Math.ceil(fl.size[1]*S));
+  const kx = W / fl.size[0], ky = H / fl.size[1];
+  // one sharp pass, then a single blur composite - blurring every rectangle
+  // separately brings a software rasteriser to its knees
+  const sharp = document.createElement('canvas');
+  sharp.width = W; sharp.height = H;
+  const sx = sharp.getContext('2d');
+  const paint = rs => rs.forEach(r => sx.fillRect(r[0]*kx, r[1]*ky, r[2]*kx, r[3]*ky));
+  sx.fillStyle = 'rgba(30,24,16,0.40)';
+  paint(fl.wall.r); paint(fl.wall_under.r);
+  if (fl.parapet) paint(fl.parapet.r);
+  sx.fillStyle = 'rgba(30,24,16,0.25)';
+  (fl.furniture || []).forEach(p => paint(p.solid.r));
+  const c = document.createElement('canvas');
+  c.width = W; c.height = H;
+  const x = c.getContext('2d');
+  x.filter = 'blur(2.5px)';
+  x.drawImage(sharp, 0, 0);
+  const t = new THREE.CanvasTexture(c);
+  t.encoding = THREE.sRGBEncoding;
+  const FW = fl.size[0], D = fl.size[1], y = 0.0915;
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(
+      [0,y,0,  FW,y,0,  FW,y,D,  0,y,0,  FW,y,D,  0,y,D], 3));
+  g.setAttribute('uv', new THREE.Float32BufferAttribute(
+      [0,1, 1,1, 1,0,  0,1, 1,0, 0,0], 2));
+  const m = new THREE.Mesh(g, new THREE.MeshBasicMaterial({map:t, transparent:true,
+      depthWrite:false, side:THREE.DoubleSide}));
+  m.renderOrder = 2;
+  m.userData.layer = 'rooms';
+  group.add(m);
 }
 
 /* A balcony is open to the sky, so the ceiling is assembled from the indoor
@@ -785,14 +911,18 @@ function applyLayers(){
 
 function setColorMode(m){
   colorMode = m;
-  [['cZone','zone'],['cSpace','space'],['cPlain','plain']].forEach(([b, k]) =>
+  // realistic cut reads like plaster; analysis cut reads like a plan's poche
+  MAT.wallTop.color = col(m === 'real' ? 0x8b8781 : 0x3c4046);
+  [['cReal','real'],['cZone','zone'],['cSpace','space']].forEach(([b, k]) =>
     $('#'+b).classList.toggle('on', k === m));
+  // analysis tints want a flat base; the realistic mode wants the boards seen
+  zoneMeshes.forEach(z => { z.visible = (m !== 'real') && !!(current.zones[z.userData.zone]||{}).name; });
   recolorSpaces();
   select(picked);
 }
+$('#cReal').onclick  = () => setColorMode('real');
 $('#cZone').onclick  = () => setColorMode('zone');
 $('#cSpace').onclick = () => setColorMode('space');
-$('#cPlain').onclick = () => setColorMode('plain');
 
 $('#slider').oninput = e => { clip.constant = +e.target.value; };
 
@@ -824,8 +954,8 @@ function setMode(m){
       yaw = r[2] > r[3] ? Math.PI/2 : 0;
       pitch = 0;
     }
-    lamp.intensity = 1.5; key.intensity = 0.5; hemi.intensity = 0.3;
-    renderer.toneMappingExposure = 0.86;
+    lamp.intensity = 2.0; key.intensity = 0.55; hemi.intensity = 0.34;
+    renderer.toneMappingExposure = 0.95;
   } else {
     lamp.intensity = 0.0;
     if (m !== 'plan'){ key.intensity = 1.55; hemi.intensity = 0.55;
