@@ -348,6 +348,10 @@ function buildFloor(fl){
   addMesh(solidGeom(fl.wall, 0.0, WH), wallMats[0], true, true, 'wall');
   addMesh(solidGeom(fl.wall_under, 0.0, SILL), wallMats[1], true, true, 'wall');
   addMesh(solidGeom(fl.wall_over, HEAD, WH), wallMats[2], true, true, 'wall');
+  if (fl.parapet){
+    const pm = MAT.wall.clone(); pm.clippingPlanes = [clip]; pm.clipShadows = true;
+    addMesh(solidGeom(fl.parapet, 0.0, MODEL.parapet || 1.1), pm, true, true, 'wall');
+  }
 
   const fm = MAT.frame.clone(); fm.clippingPlanes = [clip];
   addMesh(solidGeom(fl.glass, SILL, SILL + 0.05), fm, false, false, 'glass');
@@ -445,7 +449,9 @@ addEventListener('keyup', e => { keys[e.code] = false; });
 function blocked(x, z){
   if (!current) return false;
   const px = x + current.size[0]/2, pz = z + current.size[1]/2;
-  for (const r of current.wall_rects)
+  const bars = current.parapet ? current.wall_rects.concat(current.parapet.r)
+                               : current.wall_rects;
+  for (const r of bars)
     if (px > r[0]-0.28 && px < r[0]+r[2]+0.28 && pz > r[1]-0.28 && pz < r[1]+r[3]+0.28) return true;
   return false;
 }
@@ -497,6 +503,10 @@ MODEL.floors.forEach((f, i) => {
 });
 sel.onchange = () => buildFloor(MODEL.floors[+sel.value]);
 
+function zoneName(hex){
+  const z = current && current.zones && current.zones[hex];
+  return (z && z.name) || (MODEL.zone_names || {})[hex] || hex;
+}
 function fmt(n){ return n.toLocaleString('he-IL', {minimumFractionDigits:1, maximumFractionDigits:1}); }
 
 function fillTables(fl){
@@ -506,7 +516,7 @@ function fillTables(fl){
     tot += v.area;
     z.insertAdjacentHTML('beforeend',
       `<tr class="pick" data-z="${c}"><td><span class="swatch" style="background:${c}"></span>
-           ${c}</td><td class="n">${fmt(v.area)} מ״ר</td></tr>`);
+           ${v.name || c}</td><td class="n">${fmt(v.area)} מ״ר</td></tr>`);
   });
   z.insertAdjacentHTML('beforeend',
     `<tr><td>סכום הקודים</td><td class="n">${fmt(tot)} מ״ר</td></tr>` +
@@ -552,7 +562,7 @@ function hud(){
     $('#hudBody').innerHTML =
       `${isOutdoor(sp,i) ? 'מרפסת' : 'חלל'} ${sp.id} · <b>${fmt(sp.area)} מ״ר</b><br>` +
       `${fmt(sp.bbox[2]-sp.bbox[0])} × ${fmt(sp.bbox[3]-sp.bbox[1])} מ׳` +
-      (sp.zone ? ` · גוון <span class="swatch" style="background:${sp.zone}"></span>` : '') +
+      (sp.zone ? ` · ${zoneName(sp.zone)} <span class="swatch" style="background:${sp.zone}"></span>` : '') +
       `<div style="margin-top:7px"><button id="bOut">${isOutdoor(sp,i)
         ? 'החזר לחלל סגור' : 'סמן כמרפסת'}</button></div>`;
     $('#bOut').onclick = () => {

@@ -8,7 +8,9 @@ pip install numpy scipy pillow
 
 python scripts/dwfx_extract.py  plan.dwfx --out extract/
 python scripts/plan_to_model.py extract/  --out model.json \
-        --zone-colors '#C0C0C0,#AAE197' --line-colors '#000000,#0000FF'
+        --line-colors '#000000,#0000FF' \
+        --zone-names '#FEAE01=residential,#CB9AEB=balcony,...' \
+        --outdoor-colors '#CB9AEB'
 python scripts/preview_plan.py  model.json --index 1 --out preview.png   # sanity check
 python scripts/build_viewer.py  model.json --out apartments.html
 ```

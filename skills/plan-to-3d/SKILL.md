@@ -62,15 +62,16 @@ Per drawing frame (one plan on the sheet):
 | walls | Three sources unioned: parallel line pairs at wall thickness; thin ribbons the drawn lines leave between them; and the exterior ring implied by the gross-area outline. Junction gaps narrower than a door leaf are bridged; anything that is not connected to the wall network is furniture and is dropped. |
 | glazing | Thin parallel pairs sitting *inside* the wall thickness - what separates a window symbol from the wall's own outline. |
 | lintels | Doorways are already gaps in the wall network, so closing the network with a door-sized element finds exactly where a lintel belongs. |
-| spaces | Free area pinched apart at anything narrower than a door, then grown back, so rooms do not leak into each other through their doorways. Each space records the hatch it sits on, so a balcony that the sheet gives its own area code keeps its own colour. `--outdoor-colors` marks those colours as open to the sky. |
+| spaces | Free area pinched apart at anything narrower than a door, then grown back, so rooms do not leak into each other through their doorways. Each space records the hatch it sits on; the categories overlap, so the most specific zone covering a space names it, and a legend colour beats an anonymous hatch. |
+| legend | Area-calculation sheets carry their own legend: a row of coloured header cells over the schedule, one per category, in the exact fill colours used on the plans. Read the names off it and pass them as `--zone-names '#HEX=name,...'` - named colours are always zones, are labelled in the viewer, and `--outdoor-colors` picks which of them mean balcony. Balcony spaces render open to the sky, and the stretch of exterior ring that borders them becomes a parapet (`--parapet`, default 1.10 m) instead of a storey-high wall. |
 
 Solids come out as horizontal caps plus only the vertical faces that are
 actually exposed - extruding whole boxes would leave coincident faces between
 neighbours, which is what makes extruded floor plans shimmer.
 
 Useful flags: `--res` (raster mm/px, default 20), `--height`, `--ext-wall`,
-`--door`, `--min-run`, `--min-zone`, `--outdoor-colors`, `--frames 1,4` to build
-a subset.
+`--door`, `--min-run`, `--min-zone`, `--zone-names`, `--outdoor-colors`,
+`--parapet`, `--frames 1,4` to build a subset.
 
 Check the extraction before going 3D:
 
@@ -102,10 +103,12 @@ floor in the browser.
 - Ceiling height, sill and head are conventions (2.70 / 0.90 / 2.20 m), not
   measurements - a plan does not carry them. Set them with `--height` and edit
   `SILL`/`HEAD` when a section is available.
-- Balconies are only separated where the sheet separates them, by giving them
-  their own area code and therefore their own hatch colour. On a floor where the
-  balcony is hatched together with the rooms, nothing in the file distinguishes
-  it, and the viewer's manual balcony marking is the honest way to say so.
+- Balcony identification comes from the sheet's legend, not from guessing at
+  shapes. When the schedule has no legend and no balcony colour, the viewer's
+  manual balcony marking is the honest fallback.
+- Legend names are read off the sheet by eye (the schedule text is drawn as
+  outlines, not glyphs) and passed in - which also means a typo there is the
+  operator's, not the drawing's.
 - One drawing can serve several storeys ("קומה 2 + 3"). It is listed once,
   under the sheet's own title, because that is all the sheet contains.
 

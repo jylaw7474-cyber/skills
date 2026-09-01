@@ -454,6 +454,7 @@ def build_floor(sh, box, title, zone_colors, line_colors, furn_colors, args):
     # A hatch colour counts as an area zone on *this* plan only if it forms a
     # real region here.  The same colour can be a zone on one floor and a stick
     # of furniture on another, so the test is per frame, not per sheet.
+    names = getattr(args, '_zone_names', {})
     zones, dropped = {}, {}
     for c in sorted(zone_colors):
         m = sh.fills(g, {c})
@@ -461,11 +462,13 @@ def build_floor(sh, box, title, zone_colors, line_colors, furn_colors, args):
             continue
         lab_c, nc = ndi.label(m, structure=np.ones((3, 3)))
         biggest = ndi.sum(m, lab_c, range(1, nc + 1)).max() * mpx ** 2
-        if biggest < args.min_zone:
+        # A colour straight off the sheet's legend is an area zone by
+        # definition; only unnamed candidates have to prove themselves here.
+        if biggest < args.min_zone and c not in names:
             dropped[c] = round(float(biggest), 2)
             continue
         zones[c] = m
-    furn = sh.fills(g, furn_colors | set(dropped))
+    furn = sh.fills(g, furn_colors)
     Z = np.zeros((g['h'], g['w']), bool)
     for m in zones.values():
         Z |= m
@@ -488,7 +491,17 @@ def build_floor(sh, box, title, zone_colors, line_colors, furn_colors, args):
     wall |= sh.thin_bands(g, box, line_colors, furn, min_run=args.min_run)
     wall &= plate
 
+    outdoor_colors = {c.strip().upper() for c in args.outdoor_colors.split(',') if c.strip()}
+    out_zone = np.zeros_like(plate)
+    for c in outdoor_colors:
+        if c in zones:
+            out_zone |= zones[c]
+
     ring = plate & ~ndi.binary_erosion(plate, structure=disk(P(args.ext_wall)))
+    # The run of the ring that borders a balcony is a parapet, not a storey-high
+    # wall - a terrace walled to the ceiling is not what the sheet draws.
+    parapet = ring & ndi.binary_dilation(out_zone, structure=disk(P(150)))
+    ring &= ~parapet
     wall |= ring
 
     # close junction gaps, never a doorway (a door leaf is at least 700 mm)
@@ -562,11 +575,11 @@ def build_floor(sh, box, title, zone_colors, line_colors, furn_colors, args):
         sp = np.where(orphan, ol + ns, sp)
         ns += on
     ssz = ndi.sum(free, sp, range(1, ns + 1)) * mpx ** 2
-    # Which hatch each space sits on.  Where the sheet gives balconies their own
-    # area code - and on this kind of permit sheet it usually does - that is what
-    # separates them from the rooms, so the zone is recorded per space rather
-    # than guessed from shape.
-    outdoor_colors = {c.strip().upper() for c in args.outdoor_colors.split(',') if c.strip()}
+    # Which hatch each space sits on.  The categories overlap - a balcony is
+    # inside the residential polygon too - so among the zones that cover a
+    # space, the most specific one (smallest on this floor) names it, and a
+    # colour straight off the legend beats an anonymous hatch.
+    zone_sizes = {c: int(m.sum()) for c, m in zones.items()}
     outer = plate & ~ndi.binary_erosion(plate, structure=np.ones((3, 3)))
     outer = ndi.binary_dilation(outer, structure=disk(P(args.ext_wall + 120)))
     spaces = []
@@ -578,7 +591,9 @@ def build_floor(sh, box, title, zone_colors, line_colors, furn_colors, args):
         openf = float((edge & outer).sum()) / max(1, int(edge.sum()))
         share = {c: round(float((m & zm).sum()) / max(1, int(m.sum())), 3)
                  for c, zm in zones.items()}
-        top = max(share, key=share.get) if share else None
+        cand = [c for c, v in share.items() if v >= 0.4]
+        cand.sort(key=lambda c: (c not in names, zone_sizes[c]))
+        top = cand[0] if cand else (max(share, key=share.get) if share else None)
         ys, xs = np.nonzero(m)
         spaces.append(dict(id=i + 1, area=round(float(ssz[i]), 2),
                            bbox=[float(xs.min() * mpx), float(ys.min() * mpx),
@@ -621,8 +636,10 @@ def build_floor(sh, box, title, zone_colors, line_colors, furn_colors, args):
         glass=solid_of(glass, mpx),
         wall_rects=rects_of(wall, mpx),              # plan footprint, for collision
         lintel_area_m2=round(float(lint.sum()) * mpx ** 2, 2),
-        zones={c: dict(area=exact.get(c, 0.0), rects=rects_of(m, mpx))
+        zones={c: dict(area=exact.get(c, 0.0), rects=rects_of(m, mpx),
+                       name=names.get(c, ''))
                for c, m in zones.items()},
+        parapet=solid_of(parapet, mpx),
         dropped_colors=dropped,
         furniture=solid_of(furn & plate, mpx),
         spaces=spaces,
@@ -730,7 +747,11 @@ def main():
                          'smaller than this is furniture, not an area zone')
     ap.add_argument('--outdoor-colors', default='',
                     help='hatch colours that mark balconies / terraces, so those '
-                         'spaces render open to the sky')
+                         'spaces render open to the sky behind a parapet')
+    ap.add_argument('--zone-names', default='',
+                    help="'#HEX=name,...' read off the sheet's own legend; named "
+                         'colours are always treated as area zones')
+    ap.add_argument('--parapet', type=float, default=1.10, help='m; parapet height')
     ap.add_argument('--min-window', type=float, default=700.0, help='mm')
     ap.add_argument('--lintel', type=float, default=600.0,
                     help='mm; wall gaps this wide or less get a lintel over them')
@@ -765,6 +786,13 @@ def main():
                    and 0.2 <= fa[c] / max(1, fn[c]) <= 3.5}
     if a.zone_colors:
         zone_colors = {c.strip().upper() for c in a.zone_colors.split(',')}
+    zone_names = {}
+    for part in a.zone_names.split(','):
+        if '=' in part:
+            c, n = part.split('=', 1)
+            zone_names[c.strip().upper()] = n.strip()
+    zone_colors |= set(zone_names)
+    a._zone_names = zone_names
     def lum(c):
         try:
             return .299 * int(c[1:3], 16) + .587 * int(c[3:5], 16) + .114 * int(c[5:7], 16)
@@ -787,6 +815,9 @@ def main():
         t = titles[i]
         print(f'[{i}] {box[0]:.0f},{box[1]:.0f} .. {box[2]:.0f},{box[3]:.0f}   {t}')
         f = build_floor(sh, box, t, zone_colors, line_colors, furn_colors, a)
+        if f['plate_area_m2'] < 10:      # a legend or a stray swatch, not a plan
+            print('      skipped - no floor plate here')
+            continue
         f['index'] = i
         f['level'] = floor_level(t)
         floors.append(f)
@@ -797,7 +828,9 @@ def main():
     model = dict(source=meta.get('source'), unit_mm=meta['unit_mm'],
                  plot_scale=meta.get('plot_scale'),
                  wall_height=a.height, sill=SILL, head=HEAD, slab=SLAB,
-                 zone_colors=sorted(zone_colors), floors=floors)
+                 parapet=a.parapet,
+                 zone_colors=sorted(zone_colors), zone_names=zone_names,
+                 floors=floors)
     json.dump(model, open(a.out, 'w'), separators=(',', ':'))
     print('wrote', a.out, os.path.getsize(a.out) // 1024, 'KB')
 
