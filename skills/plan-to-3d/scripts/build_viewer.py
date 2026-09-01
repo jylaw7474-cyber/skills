@@ -10,7 +10,11 @@ an artifact, mailed, or opened from disk.
 """
 import argparse, json, os, re
 
-HTML = r"""<title>__TITLE__</title>
+# The charset meta leads the file so a browser opening it straight from disk
+# reads the Hebrew as UTF-8; without it the fallback is windows-1252 and every
+# label turns to mojibake. (Published as an artifact, the host adds its own.)
+HTML = r"""<meta charset="utf-8">
+<title>__TITLE__</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Frank+Ruhl+Libre:wght@500;700&family=Heebo:wght@300;400;500;700&display=swap">
 <style>
 :root{
@@ -1010,6 +1014,9 @@ def main():
     ap.add_argument('--sub', default='')
     ap.add_argument('--start', type=int, default=-1,
                     help='floor shown first; -1 picks the one with the most spaces')
+    ap.add_argument('--embed-three', default='',
+                    help='path to three.min.js; embeds it so the file opens with '
+                         'no network at all')
     a = ap.parse_args()
     m = json.load(open(a.model, encoding='utf-8'))
     start = a.start
@@ -1026,6 +1033,11 @@ def main():
             .replace('__SILL__', '%.2f' % m['sill'])
             .replace('__HEAD__', '%.2f' % m['head'])
             .replace('__START__', str(start)))
+    if a.embed_three:
+        lib = open(a.embed_three, encoding='utf-8').read()
+        html = html.replace(
+            '<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>',
+            '<script>\n' + lib + '\n</script>')
     open(a.out, 'w', encoding='utf-8').write(html)
     print('wrote', a.out, os.path.getsize(a.out) // 1024, 'KB')
 
