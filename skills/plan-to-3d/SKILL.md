@@ -65,6 +65,11 @@ Per drawing frame (one plan on the sheet):
 | spaces | Free area pinched apart at anything narrower than a door, then grown back, so rooms do not leak into each other through their doorways. Each space records the hatch it sits on; the categories overlap, so the most specific zone covering a space names it, and a legend colour beats an anonymous hatch. |
 | legend | Area-calculation sheets carry their own legend: a row of coloured header cells over the schedule, one per category, in the exact fill colours used on the plans. Read the names off it and pass them as `--zone-names '#HEX=name,...'` - named colours are always zones, are labelled in the viewer, and `--outdoor-colors` picks which of them mean balcony. Balcony spaces render open to the sky, and the stretch of exterior ring that borders them becomes a parapet (`--parapet`, default 1.10 m) instead of a storey-high wall. |
 
+Furniture footprints become three-dimensional pieces by shape: a stool-sized
+blob is seating height, a mattress-sized one is a bed, a shallow long run
+against a wall is cabinetry, the rest is table height. Heights are furnishing
+conventions, clearly not measurements.
+
 Solids come out as horizontal caps plus only the vertical faces that are
 actually exposed - extruding whole boxes would leave coincident faces between
 neighbours, which is what makes extruded floor plans shimmer.

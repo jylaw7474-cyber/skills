@@ -90,8 +90,8 @@ kbd{background:#222731;border:1px solid #333a45;border-bottom-width:2px;border-r
   <div class="sec">
     <label>צביעת רצפה</label>
     <div class="row">
-      <button id="cZone">לפי שטח</button>
-      <button id="cSpace" class="on">לפי חלל</button>
+      <button id="cZone" class="on">לפי שטח</button>
+      <button id="cSpace">לפי חלל</button>
       <button id="cPlain">אחיד</button>
     </div>
   </div>
@@ -100,7 +100,7 @@ kbd{background:#222731;border:1px solid #333a45;border-bottom-width:2px;border-r
     <label>שכבות</label>
     <div class="tog on"><input type="checkbox" id="tWall" checked><span>קירות</span></div>
     <div class="tog on"><input type="checkbox" id="tGlass" checked><span>זיגוג</span></div>
-    <div class="tog"><input type="checkbox" id="tFurn"><span>ריהוט לפי התוכנית</span></div>
+    <div class="tog on"><input type="checkbox" id="tFurn" checked><span>ריהוט</span></div>
     <div class="tog"><input type="checkbox" id="tCeil"><span>תקרה</span></div>
     <div class="tog on"><input type="checkbox" id="tZones" checked><span>שכבות שטח</span></div>
     <div class="tog on"><input type="checkbox" id="tRooms" checked><span>חללים</span></div>
@@ -138,6 +138,21 @@ const MODEL = JSON.parse(document.getElementById('model').textContent);
 /* three r128 predates colour management, so every authored colour and texture
    has to be handed over in linear space or the whole model renders washed out. */
 const col = h => new THREE.Color(h).convertSRGBToLinear();
+
+/* The sheet's legend colours are printing pastels; on a lit model they all melt
+   into cream.  Boosting saturation keeps each category's hue identity while
+   making the separation between area types readable at a glance. */
+function vividHex(hex){
+  // ACES tone mapping desaturates hard, so the authored colour has to be
+  // pushed well past where it should land on screen.
+  const c = new THREE.Color(hex), hsl = {h:0, s:0, l:0};
+  c.getHSL(hsl);
+  if (hsl.s > 0.05) c.setHSL(hsl.h, Math.min(0.85, Math.max(0.6, hsl.s * 2.6)), 0.56);
+  else c.setHSL(hsl.h, 0.04, Math.min(0.6, hsl.l));
+  return c;
+}
+const vivid = hex => vividHex(hex).convertSRGBToLinear();
+const vividCss = hex => '#' + vividHex(hex).getHexString();
 const WH = MODEL.wall_height, SILL = MODEL.sill, HEAD = MODEL.head, SLAB = MODEL.slab;
 
 /* ---------------------------------------------------------------- scene --- */
@@ -147,7 +162,7 @@ renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 renderer.outputEncoding = THREE.sRGBEncoding;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 0.92;
+renderer.toneMappingExposure = 0.85;
 renderer.localClippingEnabled = true;
 document.body.appendChild(renderer.domElement);
 
@@ -160,15 +175,15 @@ const walkCam = new THREE.PerspectiveCamera(68, 1, 0.02, 300);
 const lamp = new THREE.PointLight(0xffe9cc, 0.0, 16, 2.0);
 walkCam.add(lamp); scene.add(walkCam);
 
-const hemi = new THREE.HemisphereLight(0xdde6f2, 0x30291f, 0.55);
+const hemi = new THREE.HemisphereLight(0xe4e9f0, 0x3a332a, 0.52);
 scene.add(hemi);
-const key = new THREE.DirectionalLight(0xfff2e0, 1.55);
+const key = new THREE.DirectionalLight(0xfff2e0, 1.15);
 key.castShadow = true;
 key.shadow.mapSize.set(4096, 4096);
 key.shadow.bias = -0.00015;
 key.shadow.normalBias = 0.08;
 scene.add(key, key.target);
-const fill = new THREE.DirectionalLight(0xc3d6f2, 0.32);
+const fill = new THREE.DirectionalLight(0xc3d6f2, 0.25);
 fill.position.set(-40, 30, -25);
 scene.add(fill);
 
@@ -263,18 +278,25 @@ const MAT = {
                                          transparent:true, opacity:0.10, envMapIntensity:2.2,
                                          depthWrite:false, side:THREE.DoubleSide}),
   frame: new THREE.MeshStandardMaterial({color:col(0x8f8c86), roughness:0.45, metalness:0.35}),
-  furn:  new THREE.MeshStandardMaterial({color:col(0x9a8a74), roughness:0.8}),
+  furn: {
+    0.45: new THREE.MeshStandardMaterial({color:col(0x9b9285), roughness:0.85}),
+    0.55: new THREE.MeshStandardMaterial({color:col(0xd8cdbb), roughness:0.9}),
+    0.72: new THREE.MeshStandardMaterial({color:col(0xa8875f), roughness:0.55,
+                                          envMapIntensity:0.5}),
+    0.9:  new THREE.MeshStandardMaterial({color:col(0x8a7357), roughness:0.5,
+                                          envMapIntensity:0.6})
+  },
   ceil:  new THREE.MeshStandardMaterial({color:col(0xd7cfc2), roughness:1.0, envMapIntensity:0.1,
                                         side:THREE.DoubleSide})
 };
 // A tinted floor slab needs a neutral grain, otherwise the timber base colour
 // of the plate texture drags every room colour towards mud.
 MAT.tint = grain('#ffffff', 9, 1.6);
-const ROOM_COLORS = [0xc98a52,0x4f8fc4,0x5fa96a,0xd2ab45,0x8a72c0,0x35a6ab,0xc76a90,
-                     0x9bb247,0xc06a4f,0x5f7ccb,0xb59440,0x3fa88c];
+const ROOM_COLORS = [0xd9a06b,0x76a8d8,0x7fc08b,0xe2bd62,0xa591d4,0x5fbfc4,0xd889a8,
+                     0xb3c765,0xd8886d,0x86a0dd,0xc9ab5e,0x64c0a4];
 
 let group = new THREE.Group(); scene.add(group);
-let zoneMeshes = [], outdoor = {}, colorMode = 'space';
+let zoneMeshes = [], outdoor = {}, colorMode = 'zone';
 const OUTDOOR_COLOR = 0x6f9e86;
 
 function outKey(fl){ return 'outdoor:' + (MODEL.source || '') + ':' + fl.index; }
@@ -291,9 +313,24 @@ function saveOutdoor(){
   try { localStorage.setItem(outKey(current), JSON.stringify(outdoor)); } catch (e) {}
 }
 function isOutdoor(sp, i){ return !!outdoor[i]; }
+function mainZone(){
+  // The general residential category covers most of the floor; the type
+  // separation the eye needs is everything that is NOT it.
+  let best = null, size = -1;
+  Object.entries(current && current.zones || {}).forEach(([hex, z]) => {
+    if (z.name && z.area > size){ best = hex; size = z.area; }
+  });
+  return best;
+}
 function spaceColor(sp, i){
-  if (isOutdoor(sp, i)) return col(OUTDOOR_COLOR);
-  if (colorMode === 'zone' && sp.zone) return col(sp.zone);
+  if (isOutdoor(sp, i)) return sp.zone ? vivid(sp.zone) : col(OUTDOOR_COLOR);
+  if (colorMode === 'zone' && sp.zone){
+    // rooms inside the general category keep their own palette, so both kinds
+    // of separation survive: room from room, and area type from area type
+    if (sp.zone === mainZone() || !(current.zones[sp.zone] || {}).name)
+      return col(ROOM_COLORS[i % ROOM_COLORS.length]);
+    return vivid(sp.zone);
+  }
   if (colorMode === 'plain') return col(0xc4b7a3);
   return col(ROOM_COLORS[i % ROOM_COLORS.length]);
 }
@@ -315,6 +352,7 @@ function addMesh(geom, mat, cast, receive, layerName){
 }
 
 function buildFloor(fl){
+  current = fl;
   while (group.children.length) group.remove(group.children[0]);
   spaceMeshes = []; zoneMeshes = []; picked = -1;
   const W = fl.size[0], D = fl.size[1];
@@ -325,19 +363,24 @@ function buildFloor(fl){
 
   // One floor layer per hatch colour, in the colour the drawing itself uses -
   // so a category that the sheet separates stays separated here.
+  // The named categories partition the floor; the anonymous hatches are the
+  // gross-area calculations layered over everything, so they start switched
+  // off - shown together they hide exactly the separation being asked for.
   Object.entries(fl.zones || {}).forEach(([hex, z]) => {
+    const named = !!z.name;
     const mat = new THREE.MeshStandardMaterial({
-      color: col(hex), roughness:0.5, metalness:0.02,
-      envMapIntensity:0.55, map: MAT.tint });
+      color: named ? vivid(hex) : col(hex), roughness:0.9, metalness:0.0,
+      envMapIntensity:0.22, map: MAT.tint });
     const m = addMesh(rectGeom(z.rects, 0.018, 0.05), mat, false, true, 'zones');
     m.userData.zone = hex; m.userData.zoneArea = z.area;
+    m.visible = named;
     zoneMeshes.push(m);
   });
 
   fl.spaces.forEach((sp, i) => {
     const mat = new THREE.MeshStandardMaterial({
-      color: spaceColor(sp, i), roughness:0.5, metalness:0.02,
-      envMapIntensity:0.45, map: MAT.tint });
+      color: spaceColor(sp, i), roughness:0.85, metalness:0.0,
+      envMapIntensity:0.22, map: MAT.tint });
     const m = addMesh(rectGeom(sp.rects, 0.052, 0.086), mat, false, true, 'rooms');
     m.userData.space = sp; m.userData.index = i;
     spaceMeshes.push(m);
@@ -359,7 +402,10 @@ function buildFloor(fl){
   const gm = MAT.glass.clone(); gm.clippingPlanes = [clip];
   addMesh(solidGeom(fl.glass, SILL + 0.05, HEAD - 0.05), gm, false, false, 'glass');
 
-  addMesh(solidGeom(fl.furniture, 0.086, 0.19), MAT.furn, true, true, 'furn');
+  (fl.furniture || []).forEach(piece => {
+    const mat = MAT.furn[piece.h] || MAT.furn[0.72];
+    addMesh(solidGeom(piece.solid, 0.05, piece.h), mat, true, true, 'furn');
+  });
 
   buildCeiling(fl);
 
@@ -387,6 +433,15 @@ function buildCeiling(fl){
   const cm = MAT.ceil.clone(); cm.clippingPlanes = [clip];
   const m = addMesh(rectGeom(rects, WH, WH + 0.12), cm, false, false, 'ceil');
   m.visible = $('#tCeil').checked;
+}
+
+function spawnPoint(sp){
+  // the centre of a space's biggest rectangle is guaranteed to be inside it,
+  // which the centre of its bounding box is not
+  let best = sp.rects[0], a = -1;
+  for (const r of sp.rects) if (r[2]*r[3] > a){ a = r[2]*r[3]; best = r; }
+  return [best[0] + best[2]/2 - current.size[0]/2,
+          best[1] + best[3]/2 - current.size[1]/2, best];
 }
 
 function frameAll(){
@@ -514,8 +569,10 @@ function fillTables(fl){
   let tot = 0;
   Object.entries(fl.zones || {}).sort((a,b)=>b[1].area-a[1].area).forEach(([c, v]) => {
     tot += v.area;
+    const sw = v.name ? vividCss(c) : c;
     z.insertAdjacentHTML('beforeend',
-      `<tr class="pick" data-z="${c}"><td><span class="swatch" style="background:${c}"></span>
+      `<tr class="pick" data-z="${c}" ${v.name ? '' : 'style="opacity:.45"'}>
+           <td><span class="swatch" style="background:${sw}"></span>
            ${v.name || c}</td><td class="n">${fmt(v.area)} מ״ר</td></tr>`);
   });
   z.insertAdjacentHTML('beforeend',
@@ -526,7 +583,7 @@ function fillTables(fl){
     const m = zoneMeshes.find(m => m.userData.zone === hex);
     if (!m) return;
     m.visible = !m.visible;
-    tr.style.opacity = m.visible ? '' : '.4';
+    tr.style.opacity = m.visible ? '' : '.45';
   });
   $('#zonenote').textContent =
     'שטח לכל גוון הצללה, מגיאומטריית ההצללה שבתוכנית עצמה. קודי שטח חופפים זה על זה, ' +
@@ -548,7 +605,8 @@ function fillTables(fl){
                      (sp.bbox[1]+sp.bbox[3])/2 - fl.size[1]/2);
     orbit.dist = Math.max(9, Math.hypot(sp.bbox[2]-sp.bbox[0], sp.bbox[3]-sp.bbox[1]) * 1.5);
     if (mode === 'walk'){
-      walkCam.position.set(orbit.target.x, 1.65, orbit.target.z);
+      const [px, pz] = spawnPoint(sp);
+      walkCam.position.set(px, 1.65, pz);
     }
   });
   hud();
@@ -614,8 +672,8 @@ function setMode(m){
     $('#slider').value = 1.2; clip.constant = 1.2;
     key.position.set(current.size[0]*0.05, Math.max(current.size[0], current.size[1]),
                      -current.size[1]*0.05);
-    key.castShadow = false; key.intensity = 1.15; hemi.intensity = 0.9;
-    renderer.toneMappingExposure = 1.05;
+    key.castShadow = false; key.intensity = 1.0; key.color.set(0xffffff);
+    hemi.intensity = 0.7; renderer.toneMappingExposure = 0.95;
   } else if (current){
     key.castShadow = true;
     key.position.set(current.size[0]*0.30,
@@ -626,9 +684,9 @@ function setMode(m){
     $('#tCeil').checked = true; $('#slider').value = 3.2; clip.constant = 3.2; applyLayers();
     const sp = current.spaces.slice().sort((a,b)=>b.area-a.area)[0];
     if (sp){
-      walkCam.position.set((sp.bbox[0]+sp.bbox[2])/2 - current.size[0]/2, 1.65,
-                           (sp.bbox[1]+sp.bbox[3])/2 - current.size[1]/2);
-      yaw = (sp.bbox[2]-sp.bbox[0]) > (sp.bbox[3]-sp.bbox[1]) ? Math.PI/2 : 0;
+      const [px, pz, r] = spawnPoint(sp);
+      walkCam.position.set(px, 1.65, pz);
+      yaw = r[2] > r[3] ? Math.PI/2 : 0;
       pitch = 0;
     }
     lamp.intensity = 1.5; key.intensity = 0.5; hemi.intensity = 0.3;
@@ -636,7 +694,7 @@ function setMode(m){
   } else {
     lamp.intensity = 0.0;
     if (m !== 'plan'){ key.intensity = 1.55; hemi.intensity = 0.55;
-                       renderer.toneMappingExposure = 0.92; }
+                       renderer.toneMappingExposure = 0.85; }
     if (document.pointerLockElement) document.exitPointerLock();
   }
   hud();

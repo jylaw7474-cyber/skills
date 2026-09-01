@@ -22,7 +22,9 @@ def draw(fl, px_per_m, out):
     rects(fl['plate'], C['plate'])
     for i, sp in enumerate(sorted(fl['spaces'], key=lambda s: -s['area'])):
         rects(sp['rects'], (168, 208, 186) if sp.get('outdoor') else PALETTE[i % len(PALETTE)])
-    rects(fl['furniture'], C['furniture'])
+    fu = fl['furniture']
+    for piece in (fu if isinstance(fu, list) else [dict(solid=fu)]):
+        rects(piece['solid'], C['furniture'])
     rects(fl['wall'], C['wall'])
     rects(fl['wall_under'], C['wall'])
     rects(fl['glass'], C['glass'])

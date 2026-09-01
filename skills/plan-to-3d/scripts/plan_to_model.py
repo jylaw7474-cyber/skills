@@ -641,9 +641,45 @@ def build_floor(sh, box, title, zone_colors, line_colors, furn_colors, args):
                for c, m in zones.items()},
         parapet=solid_of(parapet, mpx),
         dropped_colors=dropped,
-        furniture=solid_of(furn & plate, mpx),
+        furniture=furniture_pieces(furn, wall, plate, mpx),
         spaces=spaces,
     )
+
+
+def furniture_pieces(furn, wall, plate, mpx):
+    """The plan draws furniture as footprints; give each piece the height its
+    shape implies.  A stool-sized blob is seating, a mattress-sized one is a
+    bed, a shallow long run against a wall is cabinetry, the rest is table
+    height.  Heights are furnishing conventions, clearly not measurements."""
+    P = lambda mm: max(1, int(round(mm / (mpx * 1000))))
+    m = furn & plate
+    lab, n = ndi.label(m, structure=np.ones((3, 3)))
+    if not n:
+        return []
+    near_wall = ndi.binary_dilation(wall, structure=disk(P(150)))
+    groups = {}
+    for i, sl in enumerate(ndi.find_objects(lab), 1):
+        if sl is None:
+            continue
+        piece = lab[sl] == i
+        a = piece.sum() * mpx ** 2
+        if a < 0.04:
+            continue
+        h_m = (sl[0].stop - sl[0].start) * mpx
+        w_m = (sl[1].stop - sl[1].start) * mpx
+        mind, maxd = min(h_m, w_m), max(h_m, w_m)
+        wall_frac = (piece & near_wall[sl]).sum() / piece.sum()
+        if a < 0.35 or mind < 0.42:
+            z = 0.45                                  # chairs, stools, tables' legs
+        elif mind >= 1.30 and a >= 2.2:
+            z = 0.55                                  # beds
+        elif mind <= 0.75 and maxd / mind >= 2.0 and wall_frac >= 0.30:
+            z = 0.90                                  # kitchen runs, cabinetry
+        else:
+            z = 0.72                                  # sofas, dining tables
+        g = groups.setdefault(z, np.zeros_like(m))
+        g[sl] |= piece
+    return [dict(h=z, solid=solid_of(g, mpx)) for z, g in sorted(groups.items())]
 
 
 def rects_of(mask, mpx, nd=2):
