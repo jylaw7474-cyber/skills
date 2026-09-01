@@ -102,6 +102,7 @@ kbd{background:#222731;border:1px solid #333a45;border-bottom-width:2px;border-r
     <div class="tog on"><input type="checkbox" id="tGlass" checked><span>זיגוג</span></div>
     <div class="tog on"><input type="checkbox" id="tFurn" checked><span>ריהוט</span></div>
     <div class="tog"><input type="checkbox" id="tCeil"><span>תקרה</span></div>
+    <div class="tog on"><input type="checkbox" id="tLabels" checked><span>תוויות שטח</span></div>
     <div class="tog on"><input type="checkbox" id="tZones" checked><span>שכבות שטח</span></div>
     <div class="tog on"><input type="checkbox" id="tRooms" checked><span>חללים</span></div>
   </div>
@@ -274,10 +275,11 @@ const MAT = {
   slab:  new THREE.MeshStandardMaterial({color:col(0x7d786f), roughness:0.95, envMapIntensity:0.2}),
   floor: new THREE.MeshStandardMaterial({color:col(0xb9a88f), roughness:0.42, metalness:0.03,
                                          envMapIntensity:0.7, map:grain('#b9a88f', 10, 1.6)}),
-  glass: new THREE.MeshPhysicalMaterial({color:col(0xbfe0ef), roughness:0.02, metalness:0.0,
-                                         transparent:true, opacity:0.10, envMapIntensity:2.2,
+  glass: new THREE.MeshPhysicalMaterial({color:col(0x7fc4e8), roughness:0.03, metalness:0.0,
+                                         transparent:true, opacity:0.26, envMapIntensity:1.8,
                                          depthWrite:false, side:THREE.DoubleSide}),
-  frame: new THREE.MeshStandardMaterial({color:col(0x8f8c86), roughness:0.45, metalness:0.35}),
+  frame: new THREE.MeshStandardMaterial({color:col(0x4c5258), roughness:0.4, metalness:0.45}),
+  wallTop: new THREE.MeshStandardMaterial({color:col(0x3c4046), roughness:0.85}),
   furn: {
     0.45: new THREE.MeshStandardMaterial({color:col(0x9b9285), roughness:0.85}),
     0.55: new THREE.MeshStandardMaterial({color:col(0xd8cdbb), roughness:0.9}),
@@ -292,6 +294,20 @@ const MAT = {
 // A tinted floor slab needs a neutral grain, otherwise the timber base colour
 // of the plate texture drags every room colour towards mud.
 MAT.tint = grain('#ffffff', 9, 1.6);
+// balcony decking: board stripes, tinted by the balcony colour underneath
+MAT.deck = (function(){
+  const c = document.createElement('canvas'); c.width = 64; c.height = 64;
+  const x = c.getContext('2d');
+  x.fillStyle = '#ffffff'; x.fillRect(0, 0, 64, 64);
+  x.fillStyle = '#c9c9c9';
+  for (let i = 0; i < 64; i += 8) x.fillRect(i, 0, 2, 64);
+  const t = new THREE.CanvasTexture(c);
+  t.encoding = THREE.sRGBEncoding;
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.repeat.set(3.3, 3.3);
+  t.anisotropy = renderer.capabilities.getMaxAnisotropy();
+  return t;
+})();
 const ROOM_COLORS = [0xd9a06b,0x76a8d8,0x7fc08b,0xe2bd62,0xa591d4,0x5fbfc4,0xd889a8,
                      0xb3c765,0xd8886d,0x86a0dd,0xc9ab5e,0x64c0a4];
 
@@ -380,20 +396,28 @@ function buildFloor(fl){
   fl.spaces.forEach((sp, i) => {
     const mat = new THREE.MeshStandardMaterial({
       color: spaceColor(sp, i), roughness:0.85, metalness:0.0,
-      envMapIntensity:0.22, map: MAT.tint });
+      envMapIntensity:0.22, map: isOutdoor(sp, i) ? MAT.deck : MAT.tint });
     const m = addMesh(rectGeom(sp.rects, 0.052, 0.086), mat, false, true, 'rooms');
     m.userData.space = sp; m.userData.index = i;
     spaceMeshes.push(m);
   });
+  buildLabels(fl);
 
   const wallMats = [MAT.wall.clone(), MAT.wall.clone(), MAT.wall.clone()];
   wallMats.forEach(m => { m.clippingPlanes = [clip]; m.clipShadows = true; });
   addMesh(solidGeom(fl.wall, 0.0, WH), wallMats[0], true, true, 'wall');
   addMesh(solidGeom(fl.wall_under, 0.0, SILL), wallMats[1], true, true, 'wall');
   addMesh(solidGeom(fl.wall_over, HEAD, WH), wallMats[2], true, true, 'wall');
+  // dark caps read as the cut in a dollhouse view, the way a plan pochees its
+  // walls - it is what separates wall from floor at a glance from above
+  addMesh(rectGeom(fl.wall.r, WH, WH + 0.02), MAT.wallTop, false, false, 'wall');
+  addMesh(rectGeom(fl.wall_over.r, WH, WH + 0.02), MAT.wallTop, false, false, 'wall');
+  addMesh(rectGeom(fl.wall_under.r, SILL, SILL + 0.02), MAT.wallTop, false, false, 'wall');
   if (fl.parapet){
     const pm = MAT.wall.clone(); pm.clippingPlanes = [clip]; pm.clipShadows = true;
-    addMesh(solidGeom(fl.parapet, 0.0, MODEL.parapet || 1.1), pm, true, true, 'wall');
+    const ph = MODEL.parapet || 1.1;
+    addMesh(solidGeom(fl.parapet, 0.0, ph), pm, true, true, 'wall');
+    addMesh(rectGeom(fl.parapet.r, ph, ph + 0.02), MAT.wallTop, false, false, 'wall');
   }
 
   const fm = MAT.frame.clone(); fm.clippingPlanes = [clip];
@@ -421,6 +445,54 @@ function buildFloor(fl){
   applyLayers();
   frameAll();
   fillTables(fl);
+}
+
+/* Floating labels: every meaningful space carries its identity and area, so
+   the areas are readable straight off the model, not only from the side table. */
+let labelSprites = [];
+function labelSprite(line1, line2, accent){
+  const c = document.createElement('canvas');
+  const W = 512, H = 224; c.width = W; c.height = H;
+  const x = c.getContext('2d');
+  x.textAlign = 'center'; x.direction = 'rtl';
+  const r = 34, w = W - 16, h = H - 46, x0 = 8, y0 = 8;
+  x.fillStyle = 'rgba(17,19,23,0.88)';
+  x.beginPath(); x.moveTo(x0 + r, y0);
+  x.arcTo(x0 + w, y0, x0 + w, y0 + h, r); x.arcTo(x0 + w, y0 + h, x0, y0 + h, r);
+  x.arcTo(x0, y0 + h, x0, y0, r); x.arcTo(x0, y0, x0 + w, y0, r);
+  x.closePath(); x.fill();
+  x.beginPath(); x.moveTo(W/2 - 18, y0 + h); x.lineTo(W/2 + 18, y0 + h);
+  x.lineTo(W/2, H - 8); x.closePath(); x.fill();
+  if (accent){ x.fillStyle = accent; x.fillRect(x0 + 14, y0 + 16, 10, h - 32); }
+  x.fillStyle = '#f2efe9';
+  x.font = '600 58px Heebo, "Segoe UI", sans-serif';
+  x.fillText(line1, W/2, y0 + 74);
+  x.fillStyle = '#c8a26a';
+  x.font = '500 52px Heebo, "Segoe UI", sans-serif';
+  x.fillText(line2, W/2, y0 + 142);
+  const t = new THREE.CanvasTexture(c);
+  t.encoding = THREE.sRGBEncoding; t.anisotropy = 4;
+  const m = new THREE.Sprite(new THREE.SpriteMaterial({map:t, depthTest:false,
+                                                       transparent:true}));
+  m.center.set(0.5, 0);
+  return m;
+}
+function buildLabels(fl){
+  labelSprites = [];
+  fl.spaces.forEach((sp, i) => {
+    if (sp.area < (isOutdoor(sp, i) ? 3 : 6)) return;
+    const zname = sp.zone && (fl.zones[sp.zone] || {}).name;
+    const name = isOutdoor(sp, i) ? 'מרפסת' : (zname && sp.zone !== mainZone() ? zname : 'חלל ' + sp.id);
+    const spr = labelSprite(name, fmt(sp.area) + ' מ״ר',
+                            sp.zone ? vividCss(sp.zone) : null);
+    const [px, pz] = spawnPoint(sp);
+    spr.position.set(px + fl.size[0]/2, WH + 0.55, pz + fl.size[1]/2);
+    const s = Math.max(1.6, Math.min(3.4, Math.sqrt(sp.area) * 0.55));
+    spr.scale.set(s, s * 224/512, 1);
+    spr.userData.layer = 'labels';
+    group.add(spr);
+    labelSprites.push(spr);
+  });
 }
 
 /* A balcony is open to the sky, so the ceiling is assembled from the indoor
@@ -458,23 +530,55 @@ function frameAll(){
 /* -------------------------------------------------------------- controls -- */
 const orbit = {theta:0.5, phi:0.95, dist:60, target:new THREE.Vector3(), drag:null};
 const el = renderer.domElement;
+
+/* Walking drives like a street view: grab the world to look around, click a
+   spot on the floor to glide to it, roll the wheel to step forward and back. */
+let walkTo = null;
+const marker = (function(){
+  const g = new THREE.Group();
+  const ring = new THREE.Mesh(new THREE.RingGeometry(0.20, 0.30, 40),
+      new THREE.MeshBasicMaterial({color:0xffffff, transparent:true, opacity:0.85,
+                                   depthTest:false, side:THREE.DoubleSide}));
+  const dot = new THREE.Mesh(new THREE.CircleGeometry(0.06, 24),
+      new THREE.MeshBasicMaterial({color:0xffffff, transparent:true, opacity:0.9,
+                                   depthTest:false}));
+  ring.rotation.x = dot.rotation.x = -Math.PI/2;
+  g.add(ring, dot); g.visible = false; g.renderOrder = 999;
+  scene.add(g);
+  return g;
+})();
+
+function groundHit(e){
+  const r = el.getBoundingClientRect();
+  ndc.x = ((e.clientX - r.left)/r.width)*2 - 1;
+  ndc.y = -((e.clientY - r.top)/r.height)*2 + 1;
+  ray.setFromCamera(ndc, mode === 'walk' ? walkCam : camera);
+  const targets = group.children.filter(m =>
+    ['rooms','zones','floor','slab'].includes(m.userData.layer) && m.visible);
+  const hit = ray.intersectObjects(targets, false)[0];
+  return hit ? hit.point : null;
+}
+
 el.addEventListener('pointerdown', e => {
-  if (mode === 'walk') { el.requestPointerLock(); return; }
   orbit.drag = {x:e.clientX, y:e.clientY, b:e.button, moved:0};
   el.setPointerCapture(e.pointerId);
 });
 el.addEventListener('pointermove', e => {
-  if (mode === 'walk'){
-    if (document.pointerLockElement === el){
-      yaw -= e.movementX * 0.0022; pitch -= e.movementY * 0.0022;
-      pitch = Math.max(-1.35, Math.min(1.35, pitch));
-    }
+  if (mode === 'walk' && !orbit.drag){
+    const p = groundHit(e);
+    if (p){ marker.position.set(p.x, 0.1, p.z); marker.visible = true; }
+    else marker.visible = false;
     return;
   }
   if (!orbit.drag) return;
   const dx = e.clientX - orbit.drag.x, dy = e.clientY - orbit.drag.y;
   orbit.drag.x = e.clientX; orbit.drag.y = e.clientY;
   orbit.drag.moved += Math.abs(dx) + Math.abs(dy);
+  if (mode === 'walk'){
+    yaw += dx * 0.0042; pitch += dy * 0.0042;
+    pitch = Math.max(-1.35, Math.min(1.35, pitch));
+    return;
+  }
   if (orbit.drag.b === 0){
     orbit.theta -= dx*0.005;
     orbit.phi = Math.max(0.08, Math.min(1.52, orbit.phi - dy*0.005));
@@ -487,11 +591,25 @@ el.addEventListener('pointermove', e => {
   }
 });
 el.addEventListener('pointerup', e => {
-  if (orbit.drag && orbit.drag.moved < 5 && mode !== 'walk') pick(e);
+  const clicked = orbit.drag && orbit.drag.moved < 6;
   orbit.drag = null;
+  if (!clicked) return;
+  if (mode === 'walk'){
+    const p = groundHit(e);
+    if (p) walkTo = new THREE.Vector3(p.x, 1.65, p.z);
+  } else pick(e);
 });
 el.addEventListener('wheel', e => {
   e.preventDefault();
+  if (mode === 'walk'){
+    const step = -Math.sign(e.deltaY) * 0.9;
+    const dx = -Math.sin(yaw) * step, dz = -Math.cos(yaw) * step;
+    const p = walkCam.position;
+    walkTo = null;
+    if (!blocked(p.x + dx, p.z)) p.x += dx;
+    if (!blocked(p.x, p.z + dz)) p.z += dz;
+    return;
+  }
   orbit.dist = Math.max(3, Math.min(400, orbit.dist * (1 + Math.sign(e.deltaY)*0.11)));
 }, {passive:false});
 
@@ -512,6 +630,21 @@ function blocked(x, z){
 }
 
 function walkStep(dt){
+  const p = walkCam.position;
+  if (walkTo){
+    const d = new THREE.Vector3().subVectors(walkTo, p); d.y = 0;
+    const dist = d.length();
+    if (dist < 0.08){ walkTo = null; }
+    else {
+      d.normalize();
+      const step = Math.min(dist, 4.2 * dt);
+      const nx = p.x + d.x * step, nz = p.z + d.z * step;
+      let moved = false;
+      if (!blocked(nx, p.z)){ p.x = nx; moved = true; }
+      if (!blocked(p.x, nz)){ p.z = nz; moved = true; }
+      if (!moved) walkTo = null;      // a wall is a wall, even for a glide
+    }
+  }
   const sp = (keys.ShiftLeft || keys.ShiftRight ? 5.4 : 2.3) * dt;
   let fx = 0, fz = 0;
   if (keys.KeyW || keys.ArrowUp) fz -= 1;
@@ -519,10 +652,10 @@ function walkStep(dt){
   if (keys.KeyA || keys.ArrowLeft) fx -= 1;
   if (keys.KeyD || keys.ArrowRight) fx += 1;
   if (!fx && !fz) return;
+  walkTo = null;
   const l = Math.hypot(fx, fz); fx /= l; fz /= l;
   const s = Math.sin(yaw), c = Math.cos(yaw);
   const dx = (fx*c - fz*s) * sp, dz = (fx*s + fz*c) * sp;
-  const p = walkCam.position;
   if (!blocked(p.x + dx, p.z)) p.x += dx;
   if (!blocked(p.x, p.z + dz)) p.z += dz;
 }
@@ -626,19 +759,21 @@ function hud(){
     $('#bOut').onclick = () => {
       outdoor[i] = !outdoor[i];
       if (!outdoor[i]) delete outdoor[i];
-      saveOutdoor(); recolorSpaces(); buildCeiling(current); applyLayers();
+      saveOutdoor(); recolorSpaces(); buildCeiling(current);
+      labelSprites.forEach(l => group.remove(l)); buildLabels(current); applyLayers();
       fillTables(current); hud();
     };
   } else {
     $('#hudBody').innerHTML = (mode === 'walk'
-        ? 'תנועה <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> · ריצה <kbd>Shift</kbd> · מבט בעכבר'
+        ? 'גרירה להביט סביב · לחיצה על הרצפה כדי ללכת לשם · גלגלת לצעוד · גם <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd>'
         : 'לחיצה על חלל מציגה את שטחו · גרירה לסיבוב · גלגלת לזום');
   }
 }
 
 function applyLayers(){
   const on = {wall:$('#tWall').checked, glass:$('#tGlass').checked, furn:$('#tFurn').checked,
-              ceil:$('#tCeil').checked, rooms:$('#tRooms').checked, zones:$('#tZones').checked};
+              ceil:$('#tCeil').checked, rooms:$('#tRooms').checked, zones:$('#tZones').checked,
+              labels:$('#tLabels').checked && mode !== 'walk'};
   group.children.forEach(m => {
     const l = m.userData.layer;
     if (l in on) m.visible = on[l];
@@ -646,7 +781,7 @@ function applyLayers(){
   document.querySelectorAll('.tog').forEach(t =>
     t.classList.toggle('on', t.querySelector('input').checked));
 }
-['tWall','tGlass','tFurn','tCeil','tRooms','tZones'].forEach(id => $('#'+id).onchange = applyLayers);
+['tWall','tGlass','tFurn','tCeil','tRooms','tZones','tLabels'].forEach(id => $('#'+id).onchange = applyLayers);
 
 function setColorMode(m){
   colorMode = m;
