@@ -631,6 +631,9 @@ def build_floor(sh, box, title, zone_colors, line_colors, furn_colors, args):
         wall_area_m2=round(float(wall.sum()) * mpx ** 2, 2),
         plate=solid_of(plate, mpx),
         wall=solid_of(wall & ~glass, mpx),           # full height
+        # the facade ring and the interior partitions, separable for finishes
+        wall_ext=solid_of((wall & ~glass) & ndi.binary_dilation(ring, structure=disk(P(80))), mpx),
+        wall_int=solid_of((wall & ~glass) & ~ndi.binary_dilation(ring, structure=disk(P(80))), mpx),
         wall_under=solid_of(glass, mpx),             # solid below the sill
         wall_over=solid_of(glass | lint, mpx),       # lintel band above the head
         glass=solid_of(glass, mpx),

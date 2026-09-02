@@ -64,6 +64,10 @@ kbd{background:#222731;border:1px solid #333a45;border-bottom-width:2px;border-r
     padding:0 5px;font:11px ui-monospace,Menlo,Consolas,monospace;color:#cfd4dc}
 #tip{position:fixed;inset-inline-end:14px;bottom:14px;color:#6e7681;font-size:11px;z-index:5}
 #slider{width:100%;accent-color:var(--accent)}
+.crow{display:flex;align-items:center;justify-content:space-between;
+      padding:3.5px 2px;color:var(--dim);font-size:12px}
+.crow input[type=color]{width:44px;height:24px;border:1px solid var(--line);
+      border-radius:6px;background:#1c2027;padding:1px 2px;cursor:pointer}
 @media (max-width:760px){#ui{width:100%;height:44vh;bottom:auto;border-inline-end:0;
   border-bottom:1px solid var(--line)}#hud{display:none}}
 </style>
@@ -98,6 +102,12 @@ kbd{background:#222731;border:1px solid #333a45;border-bottom-width:2px;border-r
       <button id="cZone">לפי שטח</button>
       <button id="cSpace">לפי חלל</button>
     </div>
+  </div>
+
+  <div class="sec">
+    <label>צבעי גימור</label>
+    <div id="colors"></div>
+    <button id="bReset" style="margin-top:7px">איפוס צבעים</button>
   </div>
 
   <div class="sec">
@@ -200,7 +210,7 @@ const walkCam = new THREE.PerspectiveCamera(68, 1, 0.02, 300);
 const lamp = new THREE.PointLight(0xffe9cc, 0.0, 16, 2.0);
 walkCam.add(lamp); scene.add(walkCam);
 
-const hemi = new THREE.HemisphereLight(0xe4e9f0, 0x3a332a, 0.52);
+const hemi = new THREE.HemisphereLight(0xf3ecdd, 0x4a4136, 0.5);
 scene.add(hemi);
 const key = new THREE.DirectionalLight(0xfff2e0, 1.15);
 key.castShadow = true;
@@ -308,7 +318,7 @@ const MAT = {
                                          transparent:true, opacity:0.26, envMapIntensity:1.8,
                                          depthWrite:false, side:THREE.DoubleSide}),
   frame: new THREE.MeshStandardMaterial({color:col(0x4c5258), roughness:0.4, metalness:0.45}),
-  wallTop: new THREE.MeshStandardMaterial({color:col(0x8b8781), roughness:0.85}),
+  wallTop: new THREE.MeshStandardMaterial({color:col(0xb3aea6), roughness:0.85}),
   furn: null,
   ceil:  new THREE.MeshStandardMaterial({color:col(0xd7cfc2), roughness:1.0, envMapIntensity:0.1,
                                         side:THREE.DoubleSide})
@@ -322,16 +332,16 @@ MAT.tint = grain('#ffffff', 9, 1.6);
 MAT.wood = (function(){
   const c = document.createElement('canvas'); c.width = 512; c.height = 512;
   const x = c.getContext('2d');
-  x.fillStyle = '#e6ddcf'; x.fillRect(0, 0, 512, 512);
+  x.fillStyle = '#f4f2ee'; x.fillRect(0, 0, 512, 512);
   const PH = 42;                        // board height in px
   for (let row = 0; row < 512/PH; row++){
     const off = (row % 3) * 170;        // staggered joints
     for (let px = -512; px < 512; px += 256){
-      const tone = 222 + Math.floor(Math.random()*26) - 13;
-      x.fillStyle = `rgb(${tone},${tone-8},${tone-24})`;
+      const tone = 242 + Math.floor(Math.random()*14) - 7;
+      x.fillStyle = `rgb(${tone},${tone-2},${tone-7})`;
       x.fillRect(px + off, row*PH, 254, PH - 2);
       // grain streaks
-      x.strokeStyle = 'rgba(120,95,60,0.13)';
+      x.strokeStyle = 'rgba(120,100,70,0.08)';
       for (let g = 0; g < 5; g++){
         const gy = row*PH + 4 + Math.random()*(PH - 10);
         x.beginPath();
@@ -367,11 +377,32 @@ MAT._linenDecl = (function(){
   return t;
 })();
 MAT.linen = MAT._linenDecl;
+/* Upholstery: large soft colour patches, so neighbouring pieces land on
+   different believable fabric colours without inventing per-item data. */
+MAT.patch = (function(){
+  const c = document.createElement('canvas'); c.width = 256; c.height = 256;
+  const x = c.getContext('2d');
+  x.fillStyle = '#b9c0b4'; x.fillRect(0, 0, 256, 256);
+  const P = ['#3f8f80','#c06a48','#d0a63c','#4f74a8','#8a9448','#96587a','#b0512c','#4b86 7f'
+            ].map(v => v.replace(' ', ''));
+  x.filter = 'blur(1px)';
+  for (let i = 0; i < 42; i++){
+    x.fillStyle = P[i % P.length];
+    const w = 46 + Math.random()*74, h = 46 + Math.random()*74;
+    x.fillRect(Math.random()*256 - 24, Math.random()*256 - 24, w, h);
+  }
+  const t = new THREE.CanvasTexture(c);
+  t.encoding = THREE.sRGBEncoding;
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.repeat.set(0.42, 0.42);            // one fabric colour spans a metre or two
+  t.magFilter = THREE.LinearFilter;
+  return t;
+})();
 MAT.furn = {
-  0.45: new THREE.MeshStandardMaterial({color:col(0xa39a8d), roughness:0.85, map:MAT.linen}),
-  0.55: new THREE.MeshStandardMaterial({color:col(0xe2d9c8), roughness:0.9, map:MAT.linen}),
-  0.72: new THREE.MeshStandardMaterial({color:col(0xb08a5e), roughness:0.5,
-                                        envMapIntensity:0.55, map:MAT.wood}),
+  0.45: new THREE.MeshStandardMaterial({color:col(0xe4ddd2), roughness:0.85, map:MAT.patch}),
+  0.55: new THREE.MeshStandardMaterial({color:col(0xf0e9dc), roughness:0.9, map:MAT.patch}),
+  0.72: new THREE.MeshStandardMaterial({color:col(0xe8e2d6), roughness:0.55,
+                                        envMapIntensity:0.5, map:MAT.patch}),
   0.9:  new THREE.MeshStandardMaterial({color:col(0x93744f), roughness:0.45,
                                         envMapIntensity:0.6, map:MAT.wood})
 };
@@ -379,12 +410,12 @@ MAT.furn = {
 MAT.deck = (function(){
   const c = document.createElement('canvas'); c.width = 64; c.height = 64;
   const x = c.getContext('2d');
-  x.fillStyle = '#efe4d2'; x.fillRect(0, 0, 64, 64);
+  x.fillStyle = '#f4f1ea'; x.fillRect(0, 0, 64, 64);
   for (let i = 0; i < 64; i += 8){
-    const tone = 214 + Math.floor(Math.random()*24) - 12;
-    x.fillStyle = `rgb(${tone},${tone-14},${tone-34})`;
+    const tone = 240 + Math.floor(Math.random()*16) - 8;
+    x.fillStyle = `rgb(${tone},${tone-3},${tone-9})`;
     x.fillRect(i + 1, 0, 6, 64);
-    x.fillStyle = 'rgba(70,52,30,0.4)';
+    x.fillStyle = 'rgba(70,52,30,0.45)';
     x.fillRect(i, 0, 1, 64);
   }
   const t = new THREE.CanvasTexture(c);
@@ -399,6 +430,32 @@ const ROOM_COLORS = [0xd9a06b,0x76a8d8,0x7fc08b,0xe2bd62,0xa591d4,0x5fbfc4,0xd88
 
 let group = new THREE.Group(); scene.add(group);
 let zoneMeshes = [], outdoor = {}, colorMode = 'real';
+
+/* The finish scheme. Every entry drives a colour picker, so the palette below
+   is only the opening position: cream plaster walls, transparent blue glazing,
+   yellow dwelling floors, brown common floors, brown deck and green parapets. */
+const CFG_DEFAULT = {
+  wall:    '#f2ebdd',   // קירות חוץ - פסטל לבן-קרם
+  wallIn:  '#e3dbc9',   // מחיצות פנים - גוון פסטל משלו
+  parapet: '#7aa05f',   // קירות מרפסת - ירוק
+  glass:   '#4fa8d8',   // זיגוג - כחול שקוף
+  frame:   '#4c5258',   // מסגרות פתחים
+  floorIn: '#eaba45',   // רצפת פנים הדירה - צהוב
+  floorPub:'#8b6244',   // רצפה ציבורית - חום
+  deck:    '#9c6b42',   // דק מרפסת - חום
+  furn:    '#a8875f'    // ריהוט עץ
+};
+let CFG = Object.assign({}, CFG_DEFAULT);
+try { Object.assign(CFG, JSON.parse(localStorage.getItem('plan3d:colors') || '{}')); }
+catch (e) {}
+const paint = {wall:[], wallIn:[], parapet:[], glass:[], frame:[]};
+
+const INTERIOR_RE = /מגורים|ממ"ד|ממ״ד/;
+function isInterior(sp){
+  const zn = sp.zone && (current.zones[sp.zone] || {}).name;
+  if (zn) return INTERIOR_RE.test(zn);
+  return sp.zone === mainZone();      // no legend on this sheet: main = dwelling
+}
 const OUTDOOR_COLOR = 0x6f9e86;
 
 function outKey(fl){ return 'outdoor:' + (MODEL.source || '') + ':' + fl.index; }
@@ -425,8 +482,10 @@ function mainZone(){
   return best;
 }
 function spaceColor(sp, i){
-  if (colorMode === 'real')
-    return col(isOutdoor(sp, i) ? 0xcdb28f : 0xcbb492);   // timber, unpainted
+  if (colorMode === 'real'){
+    if (isOutdoor(sp, i)) return col(CFG.deck);
+    return col(isInterior(sp) ? CFG.floorIn : CFG.floorPub);
+  }
   if (isOutdoor(sp, i)) return sp.zone ? vivid(sp.zone) : col(OUTDOOR_COLOR);
   if (colorMode === 'zone' && sp.zone){
     // rooms inside the general category keep their own palette, so both kinds
@@ -494,9 +553,18 @@ function buildFloor(fl){
   buildLabels(fl);
   buildAO(fl);
 
+  paint.wall.length = paint.wallIn.length = paint.parapet.length =
+      paint.glass.length = paint.frame.length = 0;
   const wallMats = [MAT.wall.clone(), MAT.wall.clone(), MAT.wall.clone()];
-  wallMats.forEach(m => { m.clippingPlanes = [clip]; m.clipShadows = true; });
-  addMesh(solidGeom(fl.wall, 0.0, WH), wallMats[0], true, true, 'wall');
+  wallMats.forEach(m => { m.clippingPlanes = [clip]; m.clipShadows = true;
+                          m.color = col(CFG.wall); paint.wall.push(m); });
+  if (fl.wall_ext && fl.wall_int){
+    addMesh(solidGeom(fl.wall_ext, 0.0, WH), wallMats[0], true, true, 'wall');
+    const im = MAT.wall.clone(); im.clippingPlanes = [clip]; im.clipShadows = true;
+    im.color = col(CFG.wallIn); paint.wallIn.push(im);
+    addMesh(solidGeom(fl.wall_int, 0.0, WH), im, true, true, 'wall');
+  } else
+    addMesh(solidGeom(fl.wall, 0.0, WH), wallMats[0], true, true, 'wall');
   addMesh(solidGeom(fl.wall_under, 0.0, SILL), wallMats[1], true, true, 'wall');
   addMesh(solidGeom(fl.wall_over, HEAD, WH), wallMats[2], true, true, 'wall');
   // dark caps read as the cut in a dollhouse view, the way a plan pochees its
@@ -506,15 +574,18 @@ function buildFloor(fl){
   addMesh(rectGeom(fl.wall_under.r, SILL, SILL + 0.02), MAT.wallTop, false, false, 'wall');
   if (fl.parapet){
     const pm = MAT.wall.clone(); pm.clippingPlanes = [clip]; pm.clipShadows = true;
+    pm.color = col(CFG.parapet); paint.parapet.push(pm);
     const ph = MODEL.parapet || 1.1;
     addMesh(solidGeom(fl.parapet, 0.0, ph), pm, true, true, 'wall');
     addMesh(rectGeom(fl.parapet.r, ph, ph + 0.02), MAT.wallTop, false, false, 'wall');
   }
 
   const fm = MAT.frame.clone(); fm.clippingPlanes = [clip];
+  fm.color = col(CFG.frame); paint.frame.push(fm);
   addMesh(solidGeom(fl.glass, SILL, SILL + 0.05), fm, false, false, 'glass');
   addMesh(solidGeom(fl.glass, HEAD - 0.05, HEAD), fm, false, false, 'glass');
   const gm = MAT.glass.clone(); gm.clippingPlanes = [clip];
+  gm.color = col(CFG.glass); paint.glass.push(gm);
   addMesh(solidGeom(fl.glass, SILL + 0.05, HEAD - 0.05), gm, false, false, 'glass');
 
   (fl.furniture || []).forEach(piece => {
@@ -525,7 +596,7 @@ function buildFloor(fl){
   buildCeiling(fl);
 
   group.position.set(-W/2, 0, -D/2);
-  key.position.set(W*0.30, Math.max(W, D)*0.42 + 26, -D*0.85);
+  key.position.set(W*0.22, Math.max(W, D)*0.85 + 20, -D*0.45);
   key.target.position.set(0,0,0);
   key.shadow.camera.left = -W*0.75; key.shadow.camera.right = W*0.75;
   key.shadow.camera.top = D*1.6; key.shadow.camera.bottom = -D*1.6;
@@ -600,10 +671,10 @@ function buildAO(fl){
   sharp.width = W; sharp.height = H;
   const sx = sharp.getContext('2d');
   const paint = rs => rs.forEach(r => sx.fillRect(r[0]*kx, r[1]*ky, r[2]*kx, r[3]*ky));
-  sx.fillStyle = 'rgba(30,24,16,0.40)';
+  sx.fillStyle = 'rgba(42,42,48,0.18)';
   paint(fl.wall.r); paint(fl.wall_under.r);
   if (fl.parapet) paint(fl.parapet.r);
-  sx.fillStyle = 'rgba(30,24,16,0.25)';
+  sx.fillStyle = 'rgba(42,42,48,0.08)';
   (fl.furniture || []).forEach(p => paint(p.solid.r));
   const c = document.createElement('canvas');
   c.width = W; c.height = H;
@@ -649,7 +720,7 @@ function spawnPoint(sp){
 function frameAll(){
   const W = current.size[0], D = current.size[1];
   const r = Math.max(W, D);
-  camera.position.set(r*0.18, r*0.42, D*0.55 + r*0.30);
+  camera.position.set(r*0.12, r*0.60, D*0.50 + r*0.20);
   orbit.target.set(0, 0, 0);
   orbit.dist = camera.position.length();
   orbit.theta = Math.atan2(camera.position.x, camera.position.z);
@@ -913,10 +984,47 @@ function applyLayers(){
 }
 ['tWall','tGlass','tFurn','tCeil','tRooms','tZones','tLabels'].forEach(id => $('#'+id).onchange = applyLayers);
 
+const COLOR_FIELDS = [
+  ['wall',    'קירות חוץ'],
+  ['wallIn',  'מחיצות פנים'],
+  ['parapet', 'קירות מרפסת'],
+  ['glass',   'זיגוג'],
+  ['frame',   'מסגרות פתחים'],
+  ['floorIn', 'רצפת הדירה'],
+  ['floorPub','רצפה ציבורית'],
+  ['deck',    'דק מרפסת'],
+  ['furn',    'ריהוט עץ']
+];
+(function(){
+  const box = $('#colors');
+  COLOR_FIELDS.forEach(([k, label]) => {
+    box.insertAdjacentHTML('beforeend',
+      `<div class="crow"><span>${label}</span>
+       <input type="color" id="cf_${k}" value="${CFG[k]}"></div>`);
+    box.querySelector('#cf_' + k).oninput = e => { CFG[k] = e.target.value; applyColors(); };
+  });
+  $('#bReset').onclick = () => {
+    Object.assign(CFG, CFG_DEFAULT);
+    COLOR_FIELDS.forEach(([k]) => $('#cf_' + k).value = CFG[k]);
+    applyColors();
+  };
+})();
+
+function applyColors(){
+  try { localStorage.setItem('plan3d:colors', JSON.stringify(CFG)); } catch (e) {}
+  paint.wall.forEach(m => m.color = col(CFG.wall));
+  paint.wallIn.forEach(m => m.color = col(CFG.wallIn));
+  paint.parapet.forEach(m => m.color = col(CFG.parapet));
+  paint.glass.forEach(m => m.color = col(CFG.glass));
+  paint.frame.forEach(m => m.color = col(CFG.frame));
+  MAT.furn[0.9].color = col(CFG.furn);
+  recolorSpaces();
+}
+
 function setColorMode(m){
   colorMode = m;
   // realistic cut reads like plaster; analysis cut reads like a plan's poche
-  MAT.wallTop.color = col(m === 'real' ? 0x8b8781 : 0x3c4046);
+  MAT.wallTop.color = col(m === 'real' ? 0xb3aea6 : 0x3c4046);
   [['cReal','real'],['cZone','zone'],['cSpace','space']].forEach(([b, k]) =>
     $('#'+b).classList.toggle('on', k === m));
   // analysis tints want a flat base; the realistic mode wants the boards seen
