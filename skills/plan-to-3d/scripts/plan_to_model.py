@@ -408,6 +408,63 @@ class Sheet:
                                 b=[float(P[-1][0]), float(P[-1][1])]))
         return out
 
+    def door_swings(self, box, rmin=550, rmax=1250):
+        """Door swing arcs, as this sheet draws them: dashed, so one swing
+        arrives as several short curved pieces. Pieces are circle-fitted,
+        clustered on a shared centre, and a cluster with enough angular sweep
+        is a door - centre is the hinge, radius the leaf."""
+        x0, y0, x1, y1 = box
+        U = self.unit_mm
+        pieces = []
+        for col, polys in self.geom:
+            for pl in polys:
+                if len(pl) < 4 or len(pl) > 150:
+                    continue
+                if not (x0 <= pl[0][0] <= x1 and y0 <= pl[0][1] <= y1):
+                    continue
+                if len(pl) == 4 and pl[0] == pl[3]:
+                    continue
+                P = np.array(pl, float)
+                A = np.c_[2*P[:, 0], 2*P[:, 1], np.ones(len(P))]
+                b = (P ** 2).sum(1)
+                try:
+                    sol, *_ = np.linalg.lstsq(A, b, rcond=None)
+                except np.linalg.LinAlgError:
+                    continue
+                r2 = sol[2] + sol[0]**2 + sol[1]**2
+                if r2 <= 0:
+                    continue
+                r = math.sqrt(r2)
+                if not (300 <= r*U <= 2000):
+                    continue
+                rr = np.hypot(P[:, 0] - sol[0], P[:, 1] - sol[1])
+                if rr.std() / r > 0.03:
+                    continue
+                pieces.append((float(sol[0]), float(sol[1]), r, P))
+        clusters = []
+        for cx, cy, r, P in pieces:
+            for cl in clusters:
+                if abs(cl['cx']-cx)*U < 200 and abs(cl['cy']-cy)*U < 200 \
+                        and abs(cl['r']-r)*U < 150:
+                    cl['pts'].append(P)
+                    break
+            else:
+                clusters.append(dict(cx=cx, cy=cy, r=r, pts=[P]))
+        out = []
+        for cl in clusters:
+            if not (rmin <= cl['r']*U <= rmax):
+                continue
+            P = np.vstack(cl['pts'])
+            ang = np.sort(np.arctan2(P[:, 1]-cl['cy'], P[:, 0]-cl['cx']))
+            gaps = np.diff(np.r_[ang, ang[0] + 2*math.pi])
+            k = int(np.argmax(gaps))
+            a1, a0 = float(ang[k]), float(ang[(k+1) % len(ang)])
+            sweep = (a1 - a0) % (2*math.pi)
+            if not (0.6 <= sweep <= 2.4):
+                continue
+            out.append(dict(cx=cl['cx'], cy=cl['cy'], r=cl['r'], a0=a0, a1=a1))
+        return out
+
     def glazing(self, box, line_colors, gapmax=70, minlen=500):
         """Glass: pairs of parallel lines closer together than any wall."""
         u = lambda mm: mm / self.unit_mm
@@ -553,6 +610,26 @@ def build_floor(sh, box, title, zone_colors, line_colors, furn_colors, args):
     else:
         lint = np.zeros_like(plate)
 
+    # ---- doors -----------------------------------------------------------
+    # The drawing already says where every door hangs: the swing arc. Its
+    # centre is the hinge, its radius the leaf. Kept when the hinge sits on
+    # the wall network; angles let a viewer hang the leaf ajar.
+    doors, seen = [], set()
+    near_wall = ndi.binary_dilation(wall, structure=disk(P(300)))
+    for d in sh.door_swings(box):
+        r_m = d['r'] * sh.unit_mm / 1000.0
+        hx = (d['cx'] - g['x0']) * sh.unit_mm / 1000.0
+        hy = (d['cy'] - g['y0']) * sh.unit_mm / 1000.0
+        j, i = int(hx / mpx), int(hy / mpx)
+        if not (0 <= i < g['h'] and 0 <= j < g['w']) or not near_wall[i, j]:
+            continue
+        key = (round(hx * 4), round(hy * 4))
+        if key in seen:
+            continue
+        seen.add(key)
+        doors.append([round(hx, 2), round(hy, 2), round(r_m, 2),
+                      round(d['a0'], 3), round(d['a1'], 3)])
+
     # ---- spaces ----------------------------------------------------------
     # Rooms stay joined through their doorways, so the free space is first
     # pinched apart at anything narrower than a door and then grown back.
@@ -643,6 +720,7 @@ def build_floor(sh, box, title, zone_colors, line_colors, furn_colors, args):
                        name=names.get(c, ''))
                for c, m in zones.items()},
         parapet=solid_of(parapet, mpx),
+        doors=doors,
         dropped_colors=dropped,
         furniture=furniture_pieces(furn, wall, plate, mpx),
         spaces=spaces,

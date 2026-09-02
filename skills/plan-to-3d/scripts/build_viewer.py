@@ -115,6 +115,7 @@ kbd{background:#222731;border:1px solid #333a45;border-bottom-width:2px;border-r
     <div class="tog on"><input type="checkbox" id="tWall" checked><span>קירות</span></div>
     <div class="tog on"><input type="checkbox" id="tGlass" checked><span>זיגוג</span></div>
     <div class="tog on"><input type="checkbox" id="tFurn" checked><span>ריהוט</span></div>
+    <div class="tog on"><input type="checkbox" id="tDoors" checked><span>דלתות</span></div>
     <div class="tog"><input type="checkbox" id="tCeil"><span>תקרה</span></div>
     <div class="tog on"><input type="checkbox" id="tLabels" checked><span>תוויות שטח</span></div>
     <div class="tog on"><input type="checkbox" id="tZones" checked><span>שכבות שטח</span></div>
@@ -210,9 +211,9 @@ const walkCam = new THREE.PerspectiveCamera(68, 1, 0.02, 300);
 const lamp = new THREE.PointLight(0xffe9cc, 0.0, 16, 2.0);
 walkCam.add(lamp); scene.add(walkCam);
 
-const hemi = new THREE.HemisphereLight(0xf3ecdd, 0x4a4136, 0.5);
+const hemi = new THREE.HemisphereLight(0xf6efe2, 0x55493c, 0.95);
 scene.add(hemi);
-const key = new THREE.DirectionalLight(0xfff2e0, 1.15);
+const key = new THREE.DirectionalLight(0xfff2e0, 0.85);
 key.castShadow = true;
 key.shadow.mapSize.set(4096, 4096);
 key.shadow.bias = -0.00015;
@@ -319,6 +320,11 @@ const MAT = {
                                          depthWrite:false, side:THREE.DoubleSide}),
   frame: new THREE.MeshStandardMaterial({color:col(0x4c5258), roughness:0.4, metalness:0.45}),
   wallTop: new THREE.MeshStandardMaterial({color:col(0xb3aea6), roughness:0.85}),
+  door: new THREE.MeshStandardMaterial({color:col(0xb08954), roughness:0.45,
+                                        envMapIntensity:0.5}),
+  skirt: new THREE.MeshStandardMaterial({color:col(0x74695c), roughness:0.6,
+                                         polygonOffset:true, polygonOffsetFactor:-2,
+                                         polygonOffsetUnits:-2}),
   furn: null,
   ceil:  new THREE.MeshStandardMaterial({color:col(0xd7cfc2), roughness:1.0, envMapIntensity:0.1,
                                         side:THREE.DoubleSide})
@@ -498,8 +504,10 @@ function spaceColor(sp, i){
   return col(ROOM_COLORS[i % ROOM_COLORS.length]);
 }
 function recolorSpaces(){
-  spaceMeshes.forEach((m, i) => {
-    m.material.color = spaceColor(m.userData.space, m.userData.index);
+  spaceMeshes.forEach((m) => {
+    const c = spaceColor(m.userData.space, m.userData.index);
+    m.material.color = c;
+    m.material.emissive = c.clone().multiplyScalar(0.34);
     m.material.needsUpdate = true;
   });
 }
@@ -552,6 +560,7 @@ function buildFloor(fl){
   });
   buildLabels(fl);
   buildAO(fl);
+  buildDownlights(fl);
 
   paint.wall.length = paint.wallIn.length = paint.parapet.length =
       paint.glass.length = paint.frame.length = 0;
@@ -567,6 +576,9 @@ function buildFloor(fl){
     addMesh(solidGeom(fl.wall, 0.0, WH), wallMats[0], true, true, 'wall');
   addMesh(solidGeom(fl.wall_under, 0.0, SILL), wallMats[1], true, true, 'wall');
   addMesh(solidGeom(fl.wall_over, HEAD, WH), wallMats[2], true, true, 'wall');
+  // skirting grounds the walls at eye level
+  if (fl.wall_int) addMesh(solidGeom(fl.wall_int, 0.05, 0.125), MAT.skirt, false, false, 'wall');
+  if (fl.wall_ext) addMesh(solidGeom(fl.wall_ext, 0.05, 0.125), MAT.skirt, false, false, 'wall');
   // dark caps read as the cut in a dollhouse view, the way a plan pochees its
   // walls - it is what separates wall from floor at a glance from above
   addMesh(rectGeom(fl.wall.r, WH, WH + 0.02), MAT.wallTop, false, false, 'wall');
@@ -587,6 +599,28 @@ function buildFloor(fl){
   const gm = MAT.glass.clone(); gm.clippingPlanes = [clip];
   gm.color = col(CFG.glass); paint.glass.push(gm);
   addMesh(solidGeom(fl.glass, SILL + 0.05, HEAD - 0.05), gm, false, false, 'glass');
+
+  // Doors, hung on the hinges the drawing's swing arcs give, left ajar the
+  // way a home being toured is.
+  (fl.doors || []).forEach(d => {
+    const [hx, hy, r, a0, a1] = d;
+    let da = a1 - a0;
+    while (da >  Math.PI) da -= 2*Math.PI;
+    while (da < -Math.PI) da += 2*Math.PI;
+    const ang = a0 + da * 0.82;
+    const leaf = new THREE.BoxGeometry(r - 0.04, 2.04, 0.042);
+    leaf.translate((r - 0.04)/2 + 0.02, 1.03, 0);
+    const m = new THREE.Mesh(leaf, MAT.door);
+    m.position.set(hx, 0.05, hy);
+    m.rotation.y = -ang;
+    m.castShadow = m.receiveShadow = true;
+    m.userData.layer = 'doors';
+    group.add(m);
+    const post = new THREE.Mesh(new THREE.BoxGeometry(0.07, 2.1, 0.07), MAT.frame);
+    post.position.set(hx, 1.05, hy);
+    post.userData.layer = 'doors';
+    group.add(post);
+  });
 
   (fl.furniture || []).forEach(piece => {
     const mat = MAT.furn[piece.h] || MAT.furn[0.72];
@@ -655,6 +689,43 @@ function buildLabels(fl){
     group.add(spr);
     labelSprites.push(spr);
   });
+}
+
+/* Ceiling downlights: an emissive disk over every liveable room, so a
+   walkthrough under the ceiling reads as a lit home, not a bunker. */
+function buildDownlights(fl){
+  const g = new THREE.CircleGeometry(0.09, 20);
+  const mat = new THREE.MeshBasicMaterial({color:0xfff1d4});
+  fl.spaces.forEach((sp, i) => {
+    if (sp.area < 5 || isOutdoor(sp, i)) return;
+    const [px, pz] = [ (sp.bbox[0]+sp.bbox[2])/2, (sp.bbox[1]+sp.bbox[3])/2 ];
+    const c = spawnPoint(sp);
+    const m = new THREE.Mesh(g, mat);
+    m.rotation.x = Math.PI/2;
+    m.position.set(c[0] + fl.size[0]/2, WH - 0.005, c[1] + fl.size[1]/2);
+    m.userData.layer = 'ceil';
+    group.add(m);
+  });
+}
+
+const roomLight = new THREE.PointLight(0xffe4bd, 0.0, 11, 2.0);
+scene.add(roomLight);
+let roomLightTimer = 0;
+function updateRoomLight(dt){
+  roomLightTimer -= dt;
+  if (roomLightTimer > 0 || !current) return;
+  roomLightTimer = 0.4;
+  const px = walkCam.position.x + current.size[0]/2;
+  const pz = walkCam.position.z + current.size[1]/2;
+  for (const sp of current.spaces){
+    if (px < sp.bbox[0] || px > sp.bbox[2] || pz < sp.bbox[1] || pz > sp.bbox[3]) continue;
+    for (const r of sp.rects){
+      if (px >= r[0] && px <= r[0]+r[2] && pz >= r[1] && pz <= r[1]+r[3]){
+        roomLight.position.set(walkCam.position.x, WH - 0.25, walkCam.position.z);
+        return;
+      }
+    }
+  }
 }
 
 /* Soft contact shading: walls and furniture ground themselves with a blurred
@@ -814,7 +885,7 @@ el.addEventListener('wheel', e => {
   orbit.dist = Math.max(3, Math.min(400, orbit.dist * (1 + Math.sign(e.deltaY)*0.11)));
 }, {passive:false});
 
-let yaw = 0, pitch = 0, mode = 'orbit';
+let yaw = 0, pitch = 0, bob = 0, mode = 'orbit';
 const keys = {};
 addEventListener('keydown', e => { keys[e.code] = true;
   if (e.code === 'Space') e.preventDefault(); });
@@ -874,7 +945,9 @@ function pick(e){
 function select(i){
   picked = i;
   spaceMeshes.forEach((m, k) => {
-    m.material.emissive = col(k === i ? 0x53401f : 0x000000);
+    const c = spaceColor(m.userData.space, m.userData.index);
+    m.material.emissive = k === i ? col(0x6b5326)
+                                  : c.clone().multiplyScalar(0.34);
     m.material.needsUpdate = true;
   });
   document.querySelectorAll('#spaces tr').forEach((tr, k) =>
@@ -974,6 +1047,7 @@ function hud(){
 function applyLayers(){
   const on = {wall:$('#tWall').checked, glass:$('#tGlass').checked, furn:$('#tFurn').checked,
               ceil:$('#tCeil').checked, rooms:$('#tRooms').checked, zones:$('#tZones').checked,
+              doors:$('#tDoors').checked,
               labels:$('#tLabels').checked && mode !== 'walk'};
   group.children.forEach(m => {
     const l = m.userData.layer;
@@ -982,7 +1056,7 @@ function applyLayers(){
   document.querySelectorAll('.tog').forEach(t =>
     t.classList.toggle('on', t.querySelector('input').checked));
 }
-['tWall','tGlass','tFurn','tCeil','tRooms','tZones','tLabels'].forEach(id => $('#'+id).onchange = applyLayers);
+['tWall','tGlass','tFurn','tDoors','tCeil','tRooms','tZones','tLabels'].forEach(id => $('#'+id).onchange = applyLayers);
 
 const COLOR_FIELDS = [
   ['wall',    'קירות חוץ'],
@@ -1049,8 +1123,8 @@ function setMode(m){
     $('#slider').value = 1.2; clip.constant = 1.2;
     key.position.set(current.size[0]*0.05, Math.max(current.size[0], current.size[1]),
                      -current.size[1]*0.05);
-    key.castShadow = false; key.intensity = 1.0; key.color.set(0xffffff);
-    hemi.intensity = 0.7; renderer.toneMappingExposure = 0.95;
+    key.castShadow = false; key.intensity = 0.7; key.color.set(0xffffff);
+    hemi.intensity = 1.05; renderer.toneMappingExposure = 0.95;
   } else if (current){
     key.castShadow = true;
     key.position.set(current.size[0]*0.30,
@@ -1066,8 +1140,9 @@ function setMode(m){
       yaw = r[2] > r[3] ? Math.PI/2 : 0;
       pitch = 0;
     }
-    lamp.intensity = 2.0; key.intensity = 0.55; hemi.intensity = 0.34;
-    renderer.toneMappingExposure = 0.95;
+    lamp.intensity = 1.0; roomLight.intensity = 1.4;
+    key.intensity = 0.5; hemi.intensity = 0.55;
+    renderer.toneMappingExposure = 0.98;
   } else {
     lamp.intensity = 0.0;
     if (m !== 'plan'){ key.intensity = 1.55; hemi.intensity = 0.55;
@@ -1093,7 +1168,12 @@ let last = performance.now();
 function tick(t){
   const dt = Math.min(0.05, (t - last)/1000); last = t;
   if (mode === 'walk'){
+    const before = walkCam.position.clone();
     walkStep(dt);
+    updateRoomLight(dt);
+    const moved = before.distanceTo(walkCam.position) > 0.0005;
+    bob = moved ? bob + dt * 8.5 : bob * 0.9;
+    walkCam.position.y = 1.62 + Math.sin(bob) * 0.017;
     walkCam.rotation.set(pitch, yaw, 0, 'YXZ');
     renderer.render(scene, walkCam);
   } else {
