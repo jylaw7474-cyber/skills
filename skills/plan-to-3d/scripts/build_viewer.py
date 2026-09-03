@@ -313,7 +313,7 @@ const MAT = {
   wall:  new THREE.MeshStandardMaterial({color:col(0xeae3d8), roughness:0.9, metalness:0.0,
                                          envMapIntensity:0.35, map:grain('#eae3d8', 6, 0.9)}),
   slab:  new THREE.MeshStandardMaterial({color:col(0x7d786f), roughness:0.95, envMapIntensity:0.2}),
-  floor: new THREE.MeshStandardMaterial({color:col(0xb9a88f), roughness:0.42, metalness:0.03,
+  floor: new THREE.MeshStandardMaterial({color:col(0xcfc2ac), roughness:0.5, metalness:0.02,
                                          envMapIntensity:0.7, map:grain('#b9a88f', 10, 1.6)}),
   glass: new THREE.MeshPhysicalMaterial({color:col(0x7fc4e8), roughness:0.03, metalness:0.0,
                                          transparent:true, opacity:0.26, envMapIntensity:1.8,
@@ -559,7 +559,6 @@ function buildFloor(fl){
     spaceMeshes.push(m);
   });
   buildLabels(fl);
-  buildAO(fl);
   buildDownlights(fl);
 
   paint.wall.length = paint.wallIn.length = paint.parapet.length =
@@ -728,44 +727,6 @@ function updateRoomLight(dt){
   }
 }
 
-/* Soft contact shading: walls and furniture ground themselves with a blurred
-   shadow drawn straight from their footprints - the cheap half of ambient
-   occlusion, and the half the eye actually misses. */
-function buildAO(fl){
-  const S = 8;                                      // px per metre
-  const W = Math.min(2048, Math.ceil(fl.size[0]*S));
-  const H = Math.min(1024, Math.ceil(fl.size[1]*S));
-  const kx = W / fl.size[0], ky = H / fl.size[1];
-  // one sharp pass, then a single blur composite - blurring every rectangle
-  // separately brings a software rasteriser to its knees
-  const sharp = document.createElement('canvas');
-  sharp.width = W; sharp.height = H;
-  const sx = sharp.getContext('2d');
-  const paint = rs => rs.forEach(r => sx.fillRect(r[0]*kx, r[1]*ky, r[2]*kx, r[3]*ky));
-  sx.fillStyle = 'rgba(42,42,48,0.18)';
-  paint(fl.wall.r); paint(fl.wall_under.r);
-  if (fl.parapet) paint(fl.parapet.r);
-  sx.fillStyle = 'rgba(42,42,48,0.08)';
-  (fl.furniture || []).forEach(p => paint(p.solid.r));
-  const c = document.createElement('canvas');
-  c.width = W; c.height = H;
-  const x = c.getContext('2d');
-  x.filter = 'blur(2.5px)';
-  x.drawImage(sharp, 0, 0);
-  const t = new THREE.CanvasTexture(c);
-  t.encoding = THREE.sRGBEncoding;
-  const FW = fl.size[0], D = fl.size[1], y = 0.0915;
-  const g = new THREE.BufferGeometry();
-  g.setAttribute('position', new THREE.Float32BufferAttribute(
-      [0,y,0,  FW,y,0,  FW,y,D,  0,y,0,  FW,y,D,  0,y,D], 3));
-  g.setAttribute('uv', new THREE.Float32BufferAttribute(
-      [0,1, 1,1, 1,0,  0,1, 1,0, 0,0], 2));
-  const m = new THREE.Mesh(g, new THREE.MeshBasicMaterial({map:t, transparent:true,
-      depthWrite:false, side:THREE.DoubleSide}));
-  m.renderOrder = 2;
-  m.userData.layer = 'rooms';
-  group.add(m);
-}
 
 /* A balcony is open to the sky, so the ceiling is assembled from the indoor
    spaces and the walls instead of from the whole floor plate. */
@@ -1098,7 +1059,7 @@ function applyColors(){
 function setColorMode(m){
   colorMode = m;
   // realistic cut reads like plaster; analysis cut reads like a plan's poche
-  MAT.wallTop.color = col(m === 'real' ? 0xb3aea6 : 0x3c4046);
+  MAT.wallTop.color = col(0xb3aea6);
   [['cReal','real'],['cZone','zone'],['cSpace','space']].forEach(([b, k]) =>
     $('#'+b).classList.toggle('on', k === m));
   // analysis tints want a flat base; the realistic mode wants the boards seen
