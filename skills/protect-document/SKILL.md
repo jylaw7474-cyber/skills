@@ -16,7 +16,11 @@ description: Turn a Word or PDF file into a view-only PDF to send by email - ope
   Viewers that honour PDF permissions disable Print and Copy.
 - Metadata, bookmarks, links, attachments and form fields are dropped.
 
-Word files are converted with MS Word (`docx2pdf`, if installed) or LibreOffice.
+Word files are converted with a private, hidden MS Word instance (Windows +
+`pywin32`, user's open Word windows untouched, 180 s timeout) or LibreOffice.
+Word files with tracked changes or comments are refused (they would be baked
+into the image) unless `--allow-markup` is passed. Outputs never overwrite the
+input or an earlier protected copy (`name_protected (2).pdf`).
 
 ## Usage
 
@@ -43,7 +47,11 @@ python -c "import pikepdf; print(pikepdf.open('out.pdf').allow)"
 - AI assistants that read page images (ChatGPT, Claude, Gemini when the PDF
   itself is uploaded) can read image-only pages just as a person can. The tool
   stops text-based extraction, not vision.
-- Permission flags are enforced by the viewer. Some viewers ignore them
-  (e.g. Firefox by default) and unlocking tools exist.
+- Permission flags alone do NOT stop text extraction - common PDF libraries
+  and AI upload pipelines ignore them. The image-only pages are what keeps the
+  text out; the flags only make compliant viewers disable Print/Copy.
+- Print blocking is enforced by the viewer: Acrobat/Reader, Chrome, Apple
+  Preview yes; Edge probably; Firefox no; Gmail/Drive preview probably no.
+  See README.he.md for the table. Unlocking tools exist.
 - The output is larger than the original and its text is no longer
   searchable or accessible to screen readers.
