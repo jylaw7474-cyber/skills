@@ -12,19 +12,22 @@
 
 ## התקנה (פעם אחת, ב-Windows)
 
-1. מתקינים Python מ-https://www.python.org/downloads/ – בהתקנה מסמנים **Add Python to PATH**.
-2. פותחים "שורת הפקודה" (cmd) ומריצים:
-   ```
-   pip install pymupdf pywin32
-   ```
-   הכלי ממיר קבצי Word בעזרת ה-Word המותקן במחשב (בעותק נסתר ונפרד –
-   חלונות ה-Word הפתוחים שלך לא נפגעים). אם אין Word – מתקינים LibreOffice
-   (חינמי) מ-https://www.libreoffice.org.
+1. מורידים את קובץ ה-ZIP ופותחים אותו: קליק ימני ← **חלץ הכל**.
+   שמים את התיקייה `protect-document` במקום קבוע (למשל "המסמכים שלי").
+2. לוחצים פעמיים על **`install.bat`** שבתוך התיקייה.
+   הוא מתקין Python אם חסר, מתקין את הספריות הדרושות, ויוצר על שולחן העבודה
+   קיצור דרך בשם **Protect document**.
+   - אם Windows מציג "Windows protected your PC" – לוחצים **More info** ← **Run anyway**.
+   - אם ההתקנה האוטומטית של Python נכשלת: מתקינים Python מ-https://www.python.org/downloads/
+     (מסמנים **Add Python to PATH**) ומריצים שוב את `install.bat`.
+
+הכלי ממיר קבצי Word בעזרת ה-Word המותקן במחשב (בעותק נסתר ונפרד – חלונות ה-Word
+הפתוחים שלך לא נפגעים). אם אין Word – מתקינים LibreOffice (חינמי) מ-https://www.libreoffice.org.
 
 ## שימוש
 
-- **גוררים** קובץ (או כמה קבצים) אל `protect.bat`.
-- או לוחצים פעמיים על `protect.bat` ובוחרים קבצים.
+- **גוררים** קובץ Word או PDF (או כמה קבצים) אל **Protect document** שעל שולחן העבודה.
+- או לוחצים עליו פעמיים ובוחרים קבצים.
 
 ליד כל קובץ נוצר קובץ חדש בשם `<שם>_protected.pdf` – אותו שולחים במייל.
 המקור לא משתנה. אם כבר קיים קובץ מוגן באותו שם, נוצר `<שם>_protected (2).pdf`.
